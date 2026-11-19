@@ -124,6 +124,8 @@ function buildWhisperingWoods() {
     { type: "slime", big: true, x: tx(165), y: SURFACE_ROW * TILE - 8, minX: 160 * TILE + 6, maxX: 171 * TILE - 6 },
     slime(194, 202),
     // between hill and plateau
+    slime(211, 215),
+    // reinforced patrol on the final approach
     slime(224, 232),
     // guarding the exit
     { type: "bat", x: tx(90), y: SURFACE_ROW * TILE - 74, minX: 84 * TILE, maxX: 97 * TILE },
@@ -384,7 +386,9 @@ function buildEmberCaverns() {
   slime(78, 96, 15, emberTint);
   slime(98, 104, 15, emberTint);
   slime(130, 139, surface, emberTint);
+  slime(148, 150, 13, emberTint);
   slime(186, 190, surface, emberTint);
+  slime(209, 211, surface, emberTint);
   bat(26, 34, 72, surface, emberTint);
   bat(70, 90, 76, 15, emberTint);
   bat(196, 204, 70, surface, emberTint);
@@ -491,7 +495,9 @@ function buildFrostfallPeaks() {
   slime(83, 88, 13, frostTint);
   slime(116, 126, surface, frostTint);
   slime(118, 127, surface, frostTint, true);
+  slime(136, 138, 12, frostTint);
   slime(155, 160, surface, frostTint);
+  slime(180, 183, surface, frostTint);
   slime(196, 208, surface, frostTint);
   bat(74, 82, 60, 13, frostTint);
   bat(187, 196, 74, surface, frostTint);
@@ -612,8 +618,10 @@ function buildForgottenKingdom() {
   slime(124, 136, surface, ruinTint, true);
   slime(145, 149, 16, ruinTint);
   slime(150, 166, 16, ruinTint);
+  slime(168, 170, 16, ruinTint);
   slime(196, 200, surface, ruinTint);
   slime(206, 214, surface, ruinTint);
+  slime(227, 229, surface, ruinTint);
   bat(15, 24, 68, surface, ruinTint);
   bat(31, 37, 70, surface, ruinTint);
   bat(88, 100, 84, surface, ruinTint);
@@ -653,7 +661,8 @@ var LEVELS = [
     subtitle: "Mist, moss and creeping slimes",
     theme: "forest",
     hint: "A/D MOVE\nSPACE JUMP\nJ SWORD",
-    parts: ["MEADOW PATH", "THE OLD BRIDGE", "DEEPWOOD SHADE"],
+    parts: ["MEADOW PATH", "THE OLD BRIDGE", "MOSSY HOLLOW", "HILLTOP PASS", "DEEPWOOD SHADE"],
+    partBoundaries: [78, 105, 176, 203],
     build: buildWhisperingWoods
   },
   {
@@ -664,7 +673,8 @@ var LEVELS = [
     subtitle: "Molten rock and sleeping stone",
     theme: "cavern",
     hint: "MIND THE\nGLOWING GAP",
-    parts: ["EMBERS WAKE", "THE LAVA LAKE", "SUNKEN FORGE"],
+    parts: ["EMBERS WAKE", "THE LAVA LAKE", "MOLTEN STAIRS", "SUNKEN FORGE", "MAGMA HEART"],
+    partBoundaries: [63, 111, 143, 168],
     build: buildEmberCaverns
   },
   {
@@ -675,7 +685,8 @@ var LEVELS = [
     subtitle: "Thin air and sharper teeth",
     theme: "peaks",
     hint: "ICE HOLDS\nMOSTLY",
-    parts: ["FIRST LIGHT", "WINDWARD RIDGE", "SUMMIT STORM"],
+    parts: ["FIRST LIGHT", "WINDWARD RIDGE", "ICE BOUND", "FROZEN CHASM", "SUMMIT STORM"],
+    partBoundaries: [53, 97, 129, 155],
     build: buildFrostfallPeaks
   },
   {
@@ -686,7 +697,8 @@ var LEVELS = [
     subtitle: "Ruins that remember your name",
     theme: "kingdom",
     hint: "THE RUINS\nREMEMBER",
-    parts: ["BROKEN GATE", "HALL OF KINGS", "THE LAST COURT"],
+    parts: ["BROKEN GATE", "BATTLEMENT WALK", "HALL OF KINGS", "THE CAUSEWAY", "THE LAST COURT"],
+    partBoundaries: [59, 103, 141, 174],
     build: buildForgottenKingdom
   }
 ];
@@ -699,7 +711,7 @@ var warn = (level, msg) => errors.push(`[${level}] ${msg}`);
 var SAFE_SPAWN = 150;
 var SAFE_EXIT = 48;
 var dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
-function validate(levelId, layout, parts) {
+function validate(levelId, layout, def) {
   const notes = [];
   const { grid, cols, rows } = layout;
   const worldW = cols * TILE;
@@ -733,7 +745,19 @@ function validate(levelId, layout, parts) {
   if (firstSolidBelow(Math.floor(layout.exit.x / TILE), Math.floor(layout.exit.y / TILE), 6) === -1) {
     warn(levelId, "exit has no ground beneath it");
   }
-  if (parts !== 3) warn(levelId, `expected 3 sub-levels, registry has ${parts}`);
+  if (def.parts.length < 4) warn(levelId, `expected at least 4 sub-levels, registry has ${def.parts.length}`);
+  const bounds = def.partBoundaries;
+  if (bounds.length !== def.parts.length - 1) {
+    warn(levelId, `expected ${def.parts.length - 1} part boundaries, registry has ${bounds.length}`);
+  } else {
+    let prev = 0;
+    for (const [i, col] of bounds.entries()) {
+      if (!Number.isInteger(col) || col <= prev || col >= cols) {
+        warn(levelId, `part boundary ${i + 1} (col ${col}) is out of order or out of bounds`);
+      }
+      prev = col;
+    }
+  }
   const dangerZones = [
     { p: layout.playerStart, radius: SAFE_SPAWN, name: "spawn" },
     ...layout.checkpoints.map((cp, i) => ({ p: cp, radius: SAFE_SPAWN, name: `checkpoint ${i + 1}` })),
@@ -850,7 +874,7 @@ function validate(levelId, layout, parts) {
 console.log("Pixel Quest \u2014 level validation\n");
 for (const def of LEVELS) {
   const before = errors.length;
-  const notes = validate(def.id, def.build(), def.parts.length);
+  const notes = validate(def.id, def.build(), def);
   const status = errors.length === before ? "OK  " : "FAIL";
   console.log(` ${status} ${def.id.padEnd(6)} ${def.levelName.padEnd(18)} ${notes.join(" | ")}`);
 }

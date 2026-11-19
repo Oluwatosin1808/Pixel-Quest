@@ -47,9 +47,18 @@ export const ENEMY = {
   hurtStunMs: 220,
   flashMs: 90,
   /** Stat gains applied per sub-level (part 1 gets none). */
-  perPartHp: 1,
   perPartChase: 8,
-  perPartAggro: 26,
+  perPartAggro: 20,
+  /** Extra difficulty layered on by world (World 1 gets none, World 4 the most). */
+  perWorldChase: 6,
+  perWorldAggro: 14,
+  /**
+   * Health grows with combined depth (sub-level index + world index).
+   * One extra HP per `hpStep` depth steps, rounded up; bats are capped.
+   */
+  hpStep: 2,
+  batHpStep: 2,
+  maxExtraBatHp: 2,
 } as const;
 
 /** Scoring rules. */

@@ -46,6 +46,11 @@ export interface LevelDef {
   hint: string;
   /** Display names of the level's sub-levels (parts), in order. */
   parts: string[];
+  /**
+   * First column of each sub-level after the first, in ascending order.
+   * `parts.length - 1` entries; used by the scene to announce part changes.
+   */
+  partBoundaries: number[];
   build: () => LevelLayout;
 }
 
@@ -112,7 +117,8 @@ export const LEVELS: LevelDef[] = [
     subtitle: 'Mist, moss and creeping slimes',
     theme: 'forest',
     hint: 'A/D MOVE\nSPACE JUMP\nJ SWORD',
-    parts: ['MEADOW PATH', 'THE OLD BRIDGE', 'DEEPWOOD SHADE'],
+    parts: ['MEADOW PATH', 'THE OLD BRIDGE', 'MOSSY HOLLOW', 'HILLTOP PASS', 'DEEPWOOD SHADE'],
+    partBoundaries: [78, 105, 176, 203],
     build: buildWhisperingWoods,
   },
   {
@@ -123,7 +129,8 @@ export const LEVELS: LevelDef[] = [
     subtitle: 'Molten rock and sleeping stone',
     theme: 'cavern',
     hint: 'MIND THE\nGLOWING GAP',
-    parts: ['EMBERS WAKE', 'THE LAVA LAKE', 'SUNKEN FORGE'],
+    parts: ['EMBERS WAKE', 'THE LAVA LAKE', 'MOLTEN STAIRS', 'SUNKEN FORGE', 'MAGMA HEART'],
+    partBoundaries: [63, 111, 143, 168],
     build: buildEmberCaverns,
   },
   {
@@ -134,7 +141,8 @@ export const LEVELS: LevelDef[] = [
     subtitle: 'Thin air and sharper teeth',
     theme: 'peaks',
     hint: 'ICE HOLDS\nMOSTLY',
-    parts: ['FIRST LIGHT', 'WINDWARD RIDGE', 'SUMMIT STORM'],
+    parts: ['FIRST LIGHT', 'WINDWARD RIDGE', 'ICE BOUND', 'FROZEN CHASM', 'SUMMIT STORM'],
+    partBoundaries: [53, 97, 129, 155],
     build: buildFrostfallPeaks,
   },
   {
@@ -145,7 +153,8 @@ export const LEVELS: LevelDef[] = [
     subtitle: 'Ruins that remember your name',
     theme: 'kingdom',
     hint: 'THE RUINS\nREMEMBER',
-    parts: ['BROKEN GATE', 'HALL OF KINGS', 'THE LAST COURT'],
+    parts: ['BROKEN GATE', 'BATTLEMENT WALK', 'HALL OF KINGS', 'THE CAUSEWAY', 'THE LAST COURT'],
+    partBoundaries: [59, 103, 141, 174],
     build: buildForgottenKingdom,
   },
 ];

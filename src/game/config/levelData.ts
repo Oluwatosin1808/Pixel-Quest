@@ -255,6 +255,7 @@ export function buildWhisperingWoods(): LevelLayout {
     slime(147, 157), // guarding the stretch after the crystal
     { type: 'slime', big: true, x: tx(165), y: SURFACE_ROW * TILE - 8, minX: 160 * TILE + 6, maxX: 171 * TILE - 6 },
     slime(194, 202), // between hill and plateau
+    slime(211, 215), // reinforced patrol on the final approach
     slime(224, 232), // guarding the exit
     { type: 'bat', x: tx(90), y: SURFACE_ROW * TILE - 74, minX: 84 * TILE, maxX: 97 * TILE },
     { type: 'bat', x: tx(224), y: SURFACE_ROW * TILE - 82, minX: 217 * TILE, maxX: 231 * TILE },
@@ -590,7 +591,9 @@ export function buildEmberCaverns(): LevelLayout {
   slime(78, 96, 15, emberTint); // patrolling the lava bridge
   slime(98, 104, 15, emberTint); // holding the far end of the bridge
   slime(130, 139, surface, emberTint);
+  slime(148, 150, 13, emberTint); // guarding the crystal steps
   slime(186, 190, surface, emberTint);
+  slime(209, 211, surface, emberTint); // holding the final approach
   bat(26, 34, 72, surface, emberTint); // swooping over the first lava pit
   bat(70, 90, 76, 15, emberTint); // hunting above the lava lake
   bat(196, 204, 70, surface, emberTint); // circling the final approach
@@ -724,7 +727,9 @@ export function buildFrostfallPeaks(): LevelLayout {
   slime(83, 88, 13, frostTint); // guarding the leeward ridge
   slime(116, 126, surface, frostTint);
   slime(118, 127, surface, frostTint, true); // elite before the chasm
+  slime(136, 138, 12, frostTint); // picking across the summit pillars
   slime(155, 160, surface, frostTint);
+  slime(180, 183, surface, frostTint);
   slime(196, 208, surface, frostTint);
   bat(74, 82, 60, 13, frostTint); // hunting above the crevasse
   bat(187, 196, 74, surface, frostTint); // circling the snow drift
@@ -872,8 +877,10 @@ export function buildForgottenKingdom(): LevelLayout {
   slime(124, 136, surface, ruinTint, true); // elite behind the first shrine
   slime(145, 149, 16, ruinTint); // holding the causeway entrance
   slime(150, 166, 16, ruinTint); // pacing along the causeway
+  slime(168, 170, 16, ruinTint); // far end of the causeway
   slime(196, 200, surface, ruinTint);
   slime(206, 214, surface, ruinTint);
+  slime(227, 229, surface, ruinTint); // last court guards
   bat(15, 24, 68, surface, ruinTint); // wheeling over the broken gate
   bat(31, 37, 70, surface, ruinTint); // diving across the moat
   bat(88, 100, 84, surface, ruinTint); // circling the collapsed walkway

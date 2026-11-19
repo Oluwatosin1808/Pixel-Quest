@@ -12,7 +12,7 @@
  *
  * Bundled with esbuild (no tsx/vite-node in this repo) and run with node.
  */
-import { LEVELS } from '../src/game/config/levels';
+import { LEVELS, type LevelDef } from '../src/game/config/levels';
 import { TILE } from '../src/game/config/gameConfig';
 import type { LevelLayout } from '../src/game/config/levelData';
 
@@ -29,7 +29,7 @@ interface Pt {
 
 const dist = (a: Pt, b: Pt): number => Math.hypot(a.x - b.x, a.y - b.y);
 
-function validate(levelId: string, layout: LevelLayout, parts: number): string[] {
+function validate(levelId: string, layout: LevelLayout, def: LevelDef): string[] {
   const notes: string[] = [];
   const { grid, cols, rows } = layout;
   const worldW = cols * TILE;
@@ -69,7 +69,19 @@ function validate(levelId: string, layout: LevelLayout, parts: number): string[]
   if (firstSolidBelow(Math.floor(layout.exit.x / TILE), Math.floor(layout.exit.y / TILE), 6) === -1) {
     warn(levelId, 'exit has no ground beneath it');
   }
-  if (parts !== 3) warn(levelId, `expected 3 sub-levels, registry has ${parts}`);
+  if (def.parts.length < 4) warn(levelId, `expected at least 4 sub-levels, registry has ${def.parts.length}`);
+  const bounds = def.partBoundaries;
+  if (bounds.length !== def.parts.length - 1) {
+    warn(levelId, `expected ${def.parts.length - 1} part boundaries, registry has ${bounds.length}`);
+  } else {
+    let prev = 0;
+    for (const [i, col] of bounds.entries()) {
+      if (!Number.isInteger(col) || col <= prev || col >= cols) {
+        warn(levelId, `part boundary ${i + 1} (col ${col}) is out of order or out of bounds`);
+      }
+      prev = col;
+    }
+  }
 
   /* ---------------- Shared safety zones ---------------- */
 
@@ -214,7 +226,7 @@ function validate(levelId: string, layout: LevelLayout, parts: number): string[]
 console.log('Pixel Quest — level validation\n');
 for (const def of LEVELS) {
   const before = errors.length;
-  const notes = validate(def.id, def.build(), def.parts.length);
+  const notes = validate(def.id, def.build(), def);
   const status = errors.length === before ? 'OK  ' : 'FAIL';
   console.log(` ${status} ${def.id.padEnd(6)} ${def.levelName.padEnd(18)} ${notes.join(' | ')}`);
 }

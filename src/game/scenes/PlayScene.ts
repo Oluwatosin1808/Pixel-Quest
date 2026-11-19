@@ -177,6 +177,11 @@ export class PlayScene extends Phaser.Scene implements GameplaySceneLike {
     /* ---------------- Backgrounds (screen-fixed parallax) ---------------- */
     this.buildBackgrounds();
 
+    /* ---------------- Sub-level boundaries ---------------- */
+    // The registry declares where each named sub-level starts so the
+    // boundaries follow the level's landmarks rather than just checkpoints.
+    this.partBoundaries = this.levelDef.partBoundaries.map((col) => col * TILE);
+
     /* ---------------- Player ---------------- */
     const start = this.resolveStart(layout);
     this.player = new Player(this, start.x, start.y);
@@ -186,24 +191,27 @@ export class PlayScene extends Phaser.Scene implements GameplaySceneLike {
     this.player.onDied = () => this.handlePlayerDeath();
     this.player.onLanded = (fallSpeed) => this.spawnLandingDust(fallSpeed);
 
-    /* ---------------- Sub-level boundaries ---------------- */
-    this.partBoundaries = layout.checkpoints.map((cp) => cp.x + 40);
-    this.currentPart = Math.min(this.levelDef.parts.length, (this.levelInit.checkpoint ?? 0) + 1);
+    // Resuming from a checkpoint starts in whichever sub-level holds it.
+    this.currentPart = this.partForX(start.x);
 
     /* ---------------- Enemies ---------------- */
     this.enemyGroup = this.physics.add.group();
+    const worldTier = this.levelDef.worldIndex - 1;
     for (const spawn of layout.enemies) {
-      // Enemies grow tougher deeper into the level (part 1 is unchanged).
-      const part = this.partForX(spawn.x);
-      const bonus = part - 1;
-      const chase = ENEMY.chaseSpeed + ENEMY.perPartChase * bonus;
-      const aggro = ENEMY.aggroRange + ENEMY.perPartAggro * bonus;
+      // Difficulty climbs twice over: deeper sub-levels and later worlds both
+      // make enemies faster, more alert and tougher. Part 1 of W1 is unchanged.
+      const partBonus = this.partForX(spawn.x) - 1;
+      const depth = partBonus + worldTier;
+      const chaseGain = ENEMY.perPartChase * partBonus + ENEMY.perWorldChase * worldTier;
+      const aggro = ENEMY.aggroRange + ENEMY.perPartAggro * partBonus + ENEMY.perWorldAggro * worldTier;
+      const hpBonus = Math.ceil(depth / ENEMY.hpStep);
+      const chase = ENEMY.chaseSpeed + chaseGain;
       const enemy: Enemy =
         spawn.type === 'bat'
           ? new Bat(this, spawn.x, spawn.y, {
               minX: spawn.minX,
               maxX: spawn.maxX,
-              maxHealth: part >= 3 ? 2 : 1,
+              maxHealth: 1 + Math.min(ENEMY.maxExtraBatHp, Math.floor(depth / ENEMY.batHpStep)),
               aggroRange: aggro + 24,
               chaseSpeed: chase,
               ...(spawn.tint === undefined ? {} : { baseTint: spawn.tint }),
@@ -212,10 +220,10 @@ export class PlayScene extends Phaser.Scene implements GameplaySceneLike {
               minX: spawn.minX,
               maxX: spawn.maxX,
               big: spawn.big === true,
-              maxHealth: (spawn.big === true ? 5 : 2) + ENEMY.perPartHp * bonus,
+              maxHealth: (spawn.big === true ? 5 : 2) + hpBonus,
               aggroRange: aggro,
-              // Elites plod along slowly but gain the same part bonus.
-              chaseSpeed: (spawn.big === true ? 66 : ENEMY.chaseSpeed) + ENEMY.perPartChase * bonus,
+              // Elites plod along slowly but gain the same difficulty bonuses.
+              chaseSpeed: (spawn.big === true ? 66 : ENEMY.chaseSpeed) + chaseGain,
               ...(spawn.tint === undefined ? {} : { baseTint: spawn.tint }),
             });
       enemy.onKilled = (e) => this.handleEnemyKilled(e);
