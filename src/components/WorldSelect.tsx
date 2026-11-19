@@ -1,62 +1,75 @@
 import { commands } from '../store/bridge';
 import { useUI, showToast, setPhase } from '../store/uiStore';
 import { AudioManager } from '../game/systems/AudioManager';
-import { LEVELS } from '../game/config/levels';
+import { LEVELS, WORLD_COUNT, isLevelUnlocked } from '../game/config/levels';
 import { PixelButton } from './PixelButton';
 import { LockIcon, PlayIcon } from './icons/PixelIcons';
 
-/** World selection: worlds unlock in order as the previous one is cleared. */
+/** World/stage select: stages unlock one at a time within each world. */
 export function WorldSelect() {
   const bestScore = useUI((s) => s.bestScore);
   const highestUnlockedWorld = useUI((s) => s.highestUnlockedWorld);
   const completedLevels = useUI((s) => s.completedLevels);
 
-  const enter = (worldIndex: number, unlocked: boolean): void => {
+  const enter = (levelId: string, unlocked: boolean, worldIndex: number): void => {
     if (unlocked) {
-      commands.startWorld(worldIndex);
+      commands.startLevel(levelId);
       return;
     }
     AudioManager.get().playSfx('locked');
-    showToast(`CLEAR WORLD ${worldIndex - 1} FIRST`, 'cream');
+    showToast(worldIndex > highestUnlockedWorld ? `CLEAR WORLD ${worldIndex - 1} FIRST` : 'CLEAR THE PREVIOUS LEVEL', 'cream');
   };
 
   return (
     <div className="screen screen--worlds">
       <div className="worlds__inner">
         <header className="worlds__header">
-          <h2 className="panel__title">SELECT WORLD</h2>
-          <p className="worlds__hint">THE ANCIENT CRYSTAL SHATTERED INTO FOUR PIECES</p>
+          <h2 className="panel__title">SELECT LEVEL</h2>
+          <p className="worlds__hint">FIVE STAGES PER WORLD · CLEAR ONE TO OPEN THE NEXT</p>
         </header>
 
         <div className="worlds__grid">
-          {LEVELS.map((level) => {
-            const unlocked = level.worldIndex <= highestUnlockedWorld;
-            const cleared = completedLevels.includes(level.id);
+          {Array.from({ length: WORLD_COUNT }, (_, i) => i + 1).map((worldIndex) => {
+            const stages = LEVELS.filter((level) => level.worldIndex === worldIndex);
+            const worldUnlocked = worldIndex <= highestUnlockedWorld;
+            const clearedCount = stages.filter((level) => completedLevels.includes(level.id)).length;
+            const worldCleared = clearedCount === stages.length;
+
             return (
-              <article key={level.id} className={`world-card ${unlocked ? 'is-open' : 'is-locked'}`}>
+              <article key={worldIndex} className={`world-card ${worldUnlocked ? 'is-open' : 'is-locked'}`}>
                 <div className="world-card__badge">
-                  WORLD {level.worldIndex}
-                  {cleared && <span className="world-card__cleared">CLEARED</span>}
+                  WORLD {worldIndex}
+                  {worldCleared && <span className="world-card__cleared">CLEARED</span>}
                 </div>
-                <h3 className="world-card__name">{level.levelName}</h3>
-                <p className="world-card__sub">{level.subtitle}</p>
-                {unlocked ? (
-                  <PixelButton variant="primary" onClick={() => enter(level.worldIndex, true)}>
+                <h3 className="world-card__name">{stages[0].worldTitle}</h3>
+                <p className="world-card__sub">
+                  {stages[0].subtitle} · {clearedCount}/{stages.length}
+                </p>
+
+                <div className="world-card__levels" role="group" aria-label={`World ${worldIndex} stages`}>
+                  {stages.map((level) => {
+                    const unlocked = worldUnlocked && isLevelUnlocked(level.id, completedLevels, highestUnlockedWorld);
+                    const cleared = completedLevels.includes(level.id);
+                    return (
+                      <button
+                        key={level.id}
+                        type="button"
+                        className={`level-chip ${cleared ? 'is-cleared' : ''} ${unlocked ? '' : 'is-locked'}`}
+                        onClick={() => enter(level.id, unlocked, worldIndex)}
+                        title={`LEVEL ${level.levelIndex} · ${level.levelName}`}
+                        aria-label={`WORLD ${worldIndex} LEVEL ${level.levelIndex}: ${level.levelName}`}
+                      >
+                        {unlocked ? (cleared ? '✓' : level.levelIndex) : <LockIcon size={9} />}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {worldUnlocked && (
+                  <PixelButton variant="primary" onClick={() => commands.startWorld(worldIndex)}>
                     <PlayIcon size={11} />
-                    {cleared ? 'REPLAY' : 'ENTER'}
+                    {worldCleared ? 'REPLAY' : 'ENTER'}
                   </PixelButton>
-                ) : (
-                  <button
-                    type="button"
-                    className="btn btn--locked"
-                    onClick={() => enter(level.worldIndex, false)}
-                    aria-disabled="true"
-                  >
-                    <span className="btn__label">
-                      <LockIcon size={11} />
-                      LOCKED
-                    </span>
-                  </button>
                 )}
               </article>
             );

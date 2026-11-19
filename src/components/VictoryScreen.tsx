@@ -9,13 +9,14 @@ export function VictoryScreen() {
   const hud = useUI((s) => s.hud);
   const bestScore = useUI((s) => s.bestScore);
   const crystalsFound = useUI((s) => s.crystalsFound);
+  const nextLevelId = useUI((s) => s.nextLevelId);
 
-  // Enter = continue, R = replay, Escape = main menu.
+  // Enter = next level, R = replay, Escape = main menu.
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       if (event.key === 'Enter') {
         event.preventDefault();
-        commands.openWorlds();
+        commands.nextLevel();
       } else if (event.key === 'r' || event.key === 'R') {
         event.preventDefault();
         commands.restartLevel();
@@ -70,8 +71,8 @@ export function VictoryScreen() {
         </p>
 
         <div className="panel__actions">
-          <PixelButton variant="primary" onClick={() => commands.openWorlds()}>
-            <PlayIcon size={12} />CONTINUE
+          <PixelButton variant="primary" onClick={() => commands.nextLevel()}>
+            <PlayIcon size={12} />{nextLevelId ? 'NEXT LEVEL' : 'WORLD SELECT'}
           </PixelButton>
           <PixelButton onClick={() => commands.restartLevel()}>
             <RestartIcon size={12} />REPLAY
@@ -79,7 +80,7 @@ export function VictoryScreen() {
           <PixelButton onClick={() => commands.returnToMenu()}>MAIN MENU</PixelButton>
         </div>
 
-        <p className="panel__hint">ENTER CONTINUE · R REPLAY · ESC MENU</p>
+        <p className="panel__hint">ENTER NEXT · R REPLAY · ESC MENU</p>
       </div>
     </div>
   );

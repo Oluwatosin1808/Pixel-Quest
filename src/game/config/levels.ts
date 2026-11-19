@@ -3,6 +3,7 @@ import {
   buildForgottenKingdom,
   buildFrostfallPeaks,
   buildWhisperingWoods,
+  sliceLayout,
   type LevelLayout,
 } from './levelData';
 
@@ -34,23 +35,37 @@ export interface ThemeDef {
   accent: number;
 }
 
+/** One playable stage inside a world. */
 export interface LevelDef {
-  /** Stable id persisted in the save file. */
+  /** Stable id persisted in the save file (e.g. `ww_2`). */
   id: string;
   worldIndex: number;
+  /** Name of the world this stage belongs to (e.g. `WHISPERING WOODS`). */
+  worldTitle: string;
+  /** 1-based position of this stage inside its world. */
+  levelIndex: number;
+  levelsInWorld: number;
   worldName: string;
+  /** Name of this individual stage (e.g. `THE OLD BRIDGE`). */
   levelName: string;
   subtitle: string;
   theme: ThemeId;
   /** Short control hint shown on the signpost near the spawn. */
   hint: string;
-  /** Display names of the level's sub-levels (parts), in order. */
-  parts: string[];
-  /**
-   * First column of each sub-level after the first, in ascending order.
-   * `parts.length - 1` entries; used by the scene to announce part changes.
-   */
-  partBoundaries: number[];
+  build: () => LevelLayout;
+}
+
+/** A full world map and the columns where it is split into standalone levels. */
+interface WorldDef {
+  id: string;
+  worldIndex: number;
+  levelName: string;
+  subtitle: string;
+  theme: ThemeId;
+  hint: string;
+  levelNames: string[];
+  /** First column of stages 2..5. */
+  splits: number[];
   build: () => LevelLayout;
 }
 
@@ -107,70 +122,117 @@ const THEMES: Record<ThemeId, ThemeDef> = {
   },
 };
 
-/** Every playable level, in world order. */
-export const LEVELS: LevelDef[] = [
+/** Every stage of a world is carved out of one hand-authored map. */
+const WORLDS: WorldDef[] = [
   {
-    id: 'ww_1',
+    id: 'ww',
     worldIndex: 1,
-    worldName: 'WORLD 1',
     levelName: 'WHISPERING WOODS',
     subtitle: 'Mist, moss and creeping slimes',
     theme: 'forest',
     hint: 'A/D MOVE\nSPACE JUMP\nJ SWORD',
-    parts: ['MEADOW PATH', 'THE OLD BRIDGE', 'MOSSY HOLLOW', 'HILLTOP PASS', 'DEEPWOOD SHADE'],
-    partBoundaries: [78, 105, 176, 203],
+    levelNames: ['MEADOW PATH', 'THE OLD BRIDGE', 'MOSSY HOLLOW', 'HILLTOP PASS', 'DEEPWOOD SHADE'],
+    splits: [78, 105, 180, 203],
     build: buildWhisperingWoods,
   },
   {
-    id: 'ec_1',
+    id: 'ec',
     worldIndex: 2,
-    worldName: 'WORLD 2',
     levelName: 'EMBER CAVERNS',
     subtitle: 'Molten rock and sleeping stone',
     theme: 'cavern',
     hint: 'MIND THE\nGLOWING GAP',
-    parts: ['EMBERS WAKE', 'THE LAVA LAKE', 'MOLTEN STAIRS', 'SUNKEN FORGE', 'MAGMA HEART'],
-    partBoundaries: [63, 111, 143, 168],
+    levelNames: ['EMBERS WAKE', 'THE LAVA LAKE', 'MOLTEN STAIRS', 'SUNKEN FORGE', 'MAGMA HEART'],
+    splits: [63, 111, 143, 168],
     build: buildEmberCaverns,
   },
   {
-    id: 'ff_1',
+    id: 'ff',
     worldIndex: 3,
-    worldName: 'WORLD 3',
     levelName: 'FROSTFALL PEAKS',
     subtitle: 'Thin air and sharper teeth',
     theme: 'peaks',
     hint: 'ICE HOLDS\nMOSTLY',
-    parts: ['FIRST LIGHT', 'WINDWARD RIDGE', 'ICE BOUND', 'FROZEN CHASM', 'SUMMIT STORM'],
-    partBoundaries: [53, 97, 129, 155],
+    levelNames: ['FIRST LIGHT', 'WINDWARD RIDGE', 'ICE BOUND', 'FROZEN CHASM', 'SUMMIT STORM'],
+    splits: [53, 97, 131, 155],
     build: buildFrostfallPeaks,
   },
   {
-    id: 'fk_1',
+    id: 'fk',
     worldIndex: 4,
-    worldName: 'WORLD 4',
     levelName: 'THE FORGOTTEN KINGDOM',
     subtitle: 'Ruins that remember your name',
     theme: 'kingdom',
     hint: 'THE RUINS\nREMEMBER',
-    parts: ['BROKEN GATE', 'BATTLEMENT WALK', 'HALL OF KINGS', 'THE CAUSEWAY', 'THE LAST COURT'],
-    partBoundaries: [59, 103, 141, 174],
+    levelNames: ['BROKEN GATE', 'BATTLEMENT WALK', 'HALL OF KINGS', 'THE CAUSEWAY', 'THE LAST COURT'],
+    splits: [59, 103, 141, 174],
     build: buildForgottenKingdom,
   },
 ];
 
+export const WORLD_COUNT = WORLDS.length;
+export const LEVELS_PER_WORLD = 5;
+
+/** Every playable level, grouped by world and then by stage number. */
+export const LEVELS: LevelDef[] = WORLDS.flatMap((world) =>
+  world.levelNames.map((levelName, i) => ({
+    id: `${world.id}_${i + 1}`,
+    worldIndex: world.worldIndex,
+    worldTitle: world.levelName,
+    levelIndex: i + 1,
+    levelsInWorld: LEVELS_PER_WORLD,
+    worldName: `WORLD ${world.worldIndex}`,
+    levelName,
+    subtitle: world.subtitle,
+    theme: world.theme,
+    hint: world.hint,
+    build: () => {
+      const full = world.build();
+      const bounds = [0, ...world.splits, full.cols];
+      return sliceLayout(full, bounds[i], bounds[i + 1]);
+    },
+  })),
+);
+
 /** Ids accepted anywhere a level id is persisted. */
 export const LEVEL_IDS: ReadonlySet<string> = new Set(LEVELS.map((l) => l.id));
 
-/** Ids accepted anywhere a crystal fragment id is persisted. */
-export const CRYSTAL_IDS: ReadonlySet<string> = new Set(LEVELS.map((l) => `${l.id.slice(0, 2)}_crystal_1`));
+/** Ids accepted anywhere a crystal fragment id is persisted (one per world). */
+export const CRYSTAL_IDS: ReadonlySet<string> = new Set(WORLDS.map((w) => `${w.id}_crystal_1`));
 
 export function getLevel(id: string): LevelDef {
   return LEVELS.find((l) => l.id === id) ?? LEVELS[0];
 }
 
+/** First stage of a world — used when a world is selected from the menu. */
 export function levelForWorld(worldIndex: number): LevelDef {
-  return LEVELS.find((l) => l.worldIndex === worldIndex) ?? LEVELS[0];
+  return LEVELS.find((l) => l.worldIndex === worldIndex && l.levelIndex === 1) ?? LEVELS[0];
+}
+
+export function levelAt(worldIndex: number, levelIndex: number): LevelDef | undefined {
+  return LEVELS.find((l) => l.worldIndex === worldIndex && l.levelIndex === levelIndex);
+}
+
+export function worldLevels(worldIndex: number): LevelDef[] {
+  return LEVELS.filter((l) => l.worldIndex === worldIndex);
+}
+
+/**
+ * The next stage in global play order. This crosses world boundaries, so the
+ * victory screen flows straight from a world's finale into the next world.
+ */
+export function nextLevel(id: string): LevelDef | null {
+  const index = LEVELS.findIndex((l) => l.id === id);
+  return index >= 0 && index + 1 < LEVELS.length ? LEVELS[index + 1] : null;
+}
+
+/** A stage is open once the previous stage is cleared (or the world unlocks). */
+export function isLevelUnlocked(id: string, completedLevels: string[], highestUnlockedWorld: number): boolean {
+  const level = getLevel(id);
+  if (level.worldIndex > highestUnlockedWorld) return false;
+  if (level.levelIndex === 1) return true;
+  const previous = levelAt(level.worldIndex, level.levelIndex - 1);
+  return previous !== undefined && completedLevels.includes(previous.id);
 }
 
 export function themeFor(level: LevelDef): ThemeDef {

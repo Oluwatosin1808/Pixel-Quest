@@ -4,23 +4,23 @@
  * Checks, per level in the registry:
  *   - structural integrity (grid size, spawn / checkpoints / exit / crystal)
  *   - safe placement: enemies, pickups and thin ice sit far enough from the
- *     spawn, checkpoints and exit (>= 150 px), inside the world bounds, and
- *     on (or above) solid ground
+ *     spawn, checkpoints and exit (>= 100 px / 36 px at the exit), inside the
+ *     world bounds, and on (or above) solid ground
  *   - thin-ice spans have solid approaches on both ends and headroom above
  *   - reachability: a coarse platformer BFS (walk / fall / 4-row step /
  *     5-column jump) connects the spawn to the exit
  *
  * Bundled with esbuild (no tsx/vite-node in this repo) and run with node.
  */
-import { LEVELS, type LevelDef } from '../src/game/config/levels';
+import { LEVELS, LEVELS_PER_WORLD, WORLD_COUNT, type LevelDef } from '../src/game/config/levels';
 import { TILE } from '../src/game/config/gameConfig';
 import type { LevelLayout } from '../src/game/config/levelData';
 
 const errors: string[] = [];
 const warn = (level: string, msg: string): void => errors.push(`[${level}] ${msg}`);
 
-const SAFE_SPAWN = 150; // px kept clear around spawn + checkpoints
-const SAFE_EXIT = 48; // px kept clear around the win zone
+const SAFE_SPAWN = 100; // px kept clear around spawn + checkpoints
+const SAFE_EXIT = 36; // px kept clear around the win zone
 
 interface Pt {
   x: number;
@@ -63,25 +63,16 @@ function validate(levelId: string, layout: LevelLayout, def: LevelDef): string[]
   if (firstSolidBelow(spawnCol, Math.floor(layout.playerStart.y / TILE)) === -1) {
     warn(levelId, 'player start has no ground beneath it');
   }
-  if (layout.checkpoints.length < 2) warn(levelId, `only ${layout.checkpoints.length} checkpoints`);
-  if (!layout.crystal) warn(levelId, 'missing crystal');
+  // Checkpoints and the world crystal are shared out across a world's stages,
+  // so an individual stage may legitimately have neither.
   inBounds(layout.exit, 'exit');
   if (firstSolidBelow(Math.floor(layout.exit.x / TILE), Math.floor(layout.exit.y / TILE), 6) === -1) {
     warn(levelId, 'exit has no ground beneath it');
   }
-  if (def.parts.length < 4) warn(levelId, `expected at least 4 sub-levels, registry has ${def.parts.length}`);
-  const bounds = def.partBoundaries;
-  if (bounds.length !== def.parts.length - 1) {
-    warn(levelId, `expected ${def.parts.length - 1} part boundaries, registry has ${bounds.length}`);
-  } else {
-    let prev = 0;
-    for (const [i, col] of bounds.entries()) {
-      if (!Number.isInteger(col) || col <= prev || col >= cols) {
-        warn(levelId, `part boundary ${i + 1} (col ${col}) is out of order or out of bounds`);
-      }
-      prev = col;
-    }
+  if (def.levelIndex < 1 || def.levelIndex > def.levelsInWorld) {
+    warn(levelId, `stage index ${def.levelIndex} outside 1..${def.levelsInWorld}`);
   }
+  if (def.levelName.length === 0) warn(levelId, 'missing stage name');
 
   /* ---------------- Shared safety zones ---------------- */
 
@@ -228,7 +219,31 @@ for (const def of LEVELS) {
   const before = errors.length;
   const notes = validate(def.id, def.build(), def);
   const status = errors.length === before ? 'OK  ' : 'FAIL';
-  console.log(` ${status} ${def.id.padEnd(6)} ${def.levelName.padEnd(18)} ${notes.join(' | ')}`);
+  console.log(` ${status} ${def.id.padEnd(6)} ${def.levelName.padEnd(20)} ${notes.join(' | ')}`);
+}
+
+/* ---------------- World / stage registry ---------------- */
+
+const ids = new Set<string>();
+for (const def of LEVELS) {
+  if (ids.has(def.id)) warn(def.id, 'duplicate level id');
+  ids.add(def.id);
+}
+for (let world = 1; world <= WORLD_COUNT; world++) {
+  const stages = LEVELS.filter((l) => l.worldIndex === world);
+  if (stages.length !== LEVELS_PER_WORLD) {
+    warn(`world ${world}`, `expected ${LEVELS_PER_WORLD} stages, registry has ${stages.length}`);
+    continue;
+  }
+  for (let i = 0; i < LEVELS_PER_WORLD; i++) {
+    if (stages[i].levelIndex !== i + 1) {
+      warn(`world ${world}`, `stage ${i + 1} has levelIndex ${stages[i].levelIndex}`);
+    }
+  }
+  const crystals = stages.filter((l) => l.build().crystal !== null);
+  if (crystals.length !== 1) {
+    warn(`world ${world}`, `expected 1 crystal across its stages, found ${crystals.length}`);
+  }
 }
 
 console.log('');

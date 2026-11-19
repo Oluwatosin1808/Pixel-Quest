@@ -48,8 +48,8 @@ export function GameHUD() {
         <span className="hud__area">
           {hud.worldName} <span className="hud__area-sep">·</span> {hud.levelName}
         </span>
-        <span className="hud__part" aria-label={`Sub-level ${hud.part} of ${hud.parts}`}>
-          PART {hud.part}/{hud.parts}
+        <span className="hud__part" aria-label={`Level ${hud.levelIndex} of ${hud.levelsInWorld}`}>
+          LEVEL {hud.levelIndex}/{hud.levelsInWorld}
         </span>
       </div>
     </div>

@@ -3,7 +3,7 @@ import { SaveSystem } from '../game/systems/SaveSystem';
 import { AudioManager } from '../game/systems/AudioManager';
 import { SCENE_KEYS } from '../game/config/gameConfig';
 import { LEVELS, getLevel, levelForWorld } from '../game/config/levels';
-import { hydrateFromSave, setPhase, setUI, showToast } from './uiStore';
+import { getUI, hydrateFromSave, setPhase, setUI, showToast } from './uiStore';
 
 /**
  * The React <-> Phaser bridge.
@@ -102,8 +102,8 @@ function hudForLevel(levelId: string) {
     crystalsTotal: 1,
     worldName: level.worldName,
     levelName: level.levelName,
-    part: 1,
-    parts: level.parts.length,
+    levelIndex: level.levelIndex,
+    levelsInWorld: level.levelsInWorld,
   };
 }
 
@@ -143,12 +143,23 @@ export const commands = {
     launchLevel(save.currentLevelId, save.checkpoints[save.currentLevelId] ?? 0);
   },
 
-  /** World select: enter a specific world at its saved checkpoint. */
-  startWorld(worldIndex: number): void {
+  /** Launch an individual stage at its saved checkpoint. */
+  startLevel(levelId: string): void {
     AudioManager.get().unlock();
-    const level = levelForWorld(worldIndex);
     const save = SaveSystem.load();
-    launchLevel(level.id, save.checkpoints[level.id] ?? 0);
+    launchLevel(levelId, save.checkpoints[levelId] ?? 0);
+  },
+
+  /** World select: enter a world at its first stage. */
+  startWorld(worldIndex: number): void {
+    commands.startLevel(levelForWorld(worldIndex).id);
+  },
+
+  /** Victory screen: advance to the next stage, or back to world select. */
+  nextLevel(): void {
+    const next = getUI().nextLevelId;
+    if (next) commands.startLevel(next);
+    else commands.openWorlds();
   },
 
   openMenu(): void {
@@ -203,6 +214,7 @@ export const commands = {
       bestScore: 0,
       highestUnlockedWorld: 1,
       completedLevels: [],
+      nextLevelId: null,
     });
     showToast('FRESH START', 'cream');
   },

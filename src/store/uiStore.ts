@@ -11,9 +11,9 @@ const initialHud: HudState = {
   crystals: 0,
   crystalsTotal: 1,
   worldName: 'WORLD 1',
-  levelName: 'WHISPERING WOODS',
-  part: 1,
-  parts: 3,
+  levelName: 'MEADOW PATH',
+  levelIndex: 1,
+  levelsInWorld: 5,
 };
 
 let state: UIState = {
@@ -29,6 +29,7 @@ let state: UIState = {
   notice: null,
   highestUnlockedWorld: 1,
   completedLevels: [],
+  nextLevelId: null,
 };
 
 const listeners = new Set<() => void>();
@@ -77,7 +78,8 @@ export function hydrateFromSave(save: SaveData): void {
     settings: save.settings,
     bestScore: save.bestScore,
     crystalsFound: save.crystals.length,
-    hasContinue: Object.keys(save.checkpoints).length > 0 || save.crystals.length > 0,
+    hasContinue:
+      Object.keys(save.checkpoints).length > 0 || save.crystals.length > 0 || save.completedLevels.length > 0,
     highestUnlockedWorld: save.highestUnlockedWorld,
     completedLevels: [...save.completedLevels],
   });

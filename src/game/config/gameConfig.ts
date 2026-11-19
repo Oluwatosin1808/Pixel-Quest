@@ -46,14 +46,14 @@ export const ENEMY = {
   hurtKnockbackY: -160,
   hurtStunMs: 220,
   flashMs: 90,
-  /** Stat gains applied per sub-level (part 1 gets none). */
-  perPartChase: 8,
-  perPartAggro: 20,
+  /** Stat gains applied per stage within a world (stage 1 gets none). */
+  perLevelChase: 8,
+  perLevelAggro: 20,
   /** Extra difficulty layered on by world (World 1 gets none, World 4 the most). */
   perWorldChase: 6,
   perWorldAggro: 14,
   /**
-   * Health grows with combined depth (sub-level index + world index).
+   * Health grows with combined depth (stage index + world index).
    * One extra HP per `hpStep` depth steps, rounded up; bats are capped.
    */
   hpStep: 2,
@@ -69,7 +69,6 @@ export const SCORE = {
   batEnemy: 30,
   crystal: 100,
   levelClear: 500,
-  partClear: 150,
   heartFull: 25,
 } as const;
 

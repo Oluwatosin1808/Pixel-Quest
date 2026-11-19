@@ -548,6 +548,51 @@ button {
   font-size: 8px;
 }
 
+.world-card__cleared {
+  display: block;
+  margin-top: 4px;
+  color: var(--teal-pale);
+  font-size: 7px;
+}
+
+.world-card__levels {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+}
+
+.level-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  color: var(--cream);
+  font-family: inherit;
+  font-size: 9px;
+  background: var(--slate);
+  border: 2px solid var(--cream-dark);
+  cursor: pointer;
+}
+
+.level-chip:hover:not(.is-locked) {
+  border-color: var(--gold);
+}
+
+.level-chip.is-cleared {
+  color: var(--teal-pale);
+  border-color: var(--teal-pale);
+}
+
+.level-chip.is-locked {
+  color: var(--cream-dark);
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
 .worlds__footer {
   display: flex;
   align-items: center;

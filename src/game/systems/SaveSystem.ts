@@ -1,5 +1,13 @@
 import { SAVE_KEY, SAVE_VERSION } from '../config/gameConfig';
-import { CRYSTAL_IDS, LEVEL_IDS, LEVELS } from '../config/levels';
+import {
+  CRYSTAL_IDS,
+  LEVEL_IDS,
+  LEVELS,
+  LEVELS_PER_WORLD,
+  WORLD_COUNT,
+  nextLevel,
+  type LevelDef,
+} from '../config/levels';
 import type { SaveData, Settings } from '../../types';
 
 /** Defaults used when there is no (valid) save file. */
@@ -72,7 +80,7 @@ function validate(raw: unknown): SaveData {
   return {
     version: SAVE_VERSION,
     bestScore: clampInt(obj.bestScore, 0, 99_999_999, 0),
-    highestUnlockedWorld: clampInt(obj.highestUnlockedWorld, 1, LEVELS.length, 1),
+    highestUnlockedWorld: clampInt(obj.highestUnlockedWorld, 1, WORLD_COUNT, 1),
     checkpoints,
     currentLevelId,
     crystals: [...new Set(crystals)],
@@ -157,12 +165,22 @@ export class SaveSystem {
     return SaveSystem.update({ checkpoints });
   }
 
-  /** Record a finished level and unlock the next world when it opens up. */
-  static completeLevel(levelId: string, worldIndex: number): { save: SaveData; unlockedWorld: number } {
+  /**
+   * Record a finished stage. Clearing a stage opens the next one in the same
+   * world; only the world's final stage unlocks the following world.
+   */
+  static completeLevel(
+    levelId: string,
+    worldIndex: number,
+    levelIndex: number,
+  ): { save: SaveData; unlockedWorld: number; next: LevelDef | null } {
     const save = SaveSystem.load();
     const completed = new Set(save.completedLevels);
     completed.add(levelId);
-    const unlockedWorld = Math.max(save.highestUnlockedWorld, Math.min(LEVELS.length, worldIndex + 1));
+    const finishedWorld = levelIndex >= LEVELS_PER_WORLD;
+    const unlockedWorld = finishedWorld
+      ? Math.max(save.highestUnlockedWorld, Math.min(WORLD_COUNT, worldIndex + 1))
+      : save.highestUnlockedWorld;
     const checkpoints = { ...save.checkpoints };
     delete checkpoints[levelId];
     const next = SaveSystem.update({
@@ -170,6 +188,6 @@ export class SaveSystem {
       highestUnlockedWorld: unlockedWorld,
       checkpoints,
     });
-    return { save: next, unlockedWorld };
+    return { save: next, unlockedWorld, next: nextLevel(levelId) };
   }
 }

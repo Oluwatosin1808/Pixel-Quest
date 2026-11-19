@@ -31,7 +31,7 @@ import {
   touchInput,
   type GameplaySceneLike,
 } from '../../store/bridge';
-import { getUI, hydrateFromSave, setHud, setPhase, showToast } from '../../store/uiStore';
+import { getUI, hydrateFromSave, setHud, setPhase, setUI, showToast } from '../../store/uiStore';
 
 /** Data passed to the scene on (re)start. */
 export interface LevelInit {
@@ -85,11 +85,6 @@ export class PlayScene extends Phaser.Scene implements GameplaySceneLike {
   private activeCheckpointIndex = 0;
   private lastSafePoint = { x: 0, y: 0 };
 
-  /* ---------------- Sub-levels (parts) ---------------- */
-  private currentPart = 1;
-  /** World-x thresholds the player crosses to enter the next sub-level. */
-  private partBoundaries: number[] = [];
-
   /* ---------------- Power-ups ---------------- */
   private shieldUntil = -Infinity;
   private shieldAura: Phaser.GameObjects.Image | null = null;
@@ -141,8 +136,6 @@ export class PlayScene extends Phaser.Scene implements GameplaySceneLike {
     this.vignetteTween = null;
     this.blinkTweens = [];
     this.activeCheckpointIndex = 0;
-    this.currentPart = 1;
-    this.partBoundaries = [];
     this.shieldUntil = -Infinity;
     this.shieldAura = null;
     this.lastShieldBlockAt = -Infinity;
@@ -177,11 +170,6 @@ export class PlayScene extends Phaser.Scene implements GameplaySceneLike {
     /* ---------------- Backgrounds (screen-fixed parallax) ---------------- */
     this.buildBackgrounds();
 
-    /* ---------------- Sub-level boundaries ---------------- */
-    // The registry declares where each named sub-level starts so the
-    // boundaries follow the level's landmarks rather than just checkpoints.
-    this.partBoundaries = this.levelDef.partBoundaries.map((col) => col * TILE);
-
     /* ---------------- Player ---------------- */
     const start = this.resolveStart(layout);
     this.player = new Player(this, start.x, start.y);
@@ -191,19 +179,16 @@ export class PlayScene extends Phaser.Scene implements GameplaySceneLike {
     this.player.onDied = () => this.handlePlayerDeath();
     this.player.onLanded = (fallSpeed) => this.spawnLandingDust(fallSpeed);
 
-    // Resuming from a checkpoint starts in whichever sub-level holds it.
-    this.currentPart = this.partForX(start.x);
-
     /* ---------------- Enemies ---------------- */
     this.enemyGroup = this.physics.add.group();
     const worldTier = this.levelDef.worldIndex - 1;
+    const levelTier = this.levelDef.levelIndex - 1;
     for (const spawn of layout.enemies) {
-      // Difficulty climbs twice over: deeper sub-levels and later worlds both
-      // make enemies faster, more alert and tougher. Part 1 of W1 is unchanged.
-      const partBonus = this.partForX(spawn.x) - 1;
-      const depth = partBonus + worldTier;
-      const chaseGain = ENEMY.perPartChase * partBonus + ENEMY.perWorldChase * worldTier;
-      const aggro = ENEMY.aggroRange + ENEMY.perPartAggro * partBonus + ENEMY.perWorldAggro * worldTier;
+      // Difficulty climbs twice over: later stages and later worlds both make
+      // enemies faster, more alert and tougher. W1 stage 1 is unchanged.
+      const depth = levelTier + worldTier;
+      const chaseGain = ENEMY.perLevelChase * levelTier + ENEMY.perWorldChase * worldTier;
+      const aggro = ENEMY.aggroRange + ENEMY.perLevelAggro * levelTier + ENEMY.perWorldAggro * worldTier;
       const hpBonus = Math.ceil(depth / ENEMY.hpStep);
       const chase = ENEMY.chaseSpeed + chaseGain;
       const enemy: Enemy =
@@ -725,7 +710,6 @@ export class PlayScene extends Phaser.Scene implements GameplaySceneLike {
       this.trackAttackFx();
       this.updateThinIce(delta);
       this.updateShieldAura();
-      this.checkPartAdvance();
     } else {
       this.updateEnemies(time);
     }
@@ -968,36 +952,6 @@ export class PlayScene extends Phaser.Scene implements GameplaySceneLike {
   }
 
   /* ================================================================ */
-  /* Sub-levels (parts)                                               */
-  /* ================================================================ */
-
-  /** Which sub-level a world-x position belongs to (1-based). */
-  private partForX(x: number): number {
-    let part = 1;
-    for (const boundary of this.partBoundaries) {
-      if (x > boundary) part += 1;
-    }
-    return Math.min(part, this.levelDef.parts.length);
-  }
-
-  /** Crossed into a new sub-level? Announce it and pay the bonus. */
-  private checkPartAdvance(): void {
-    const part = this.partForX(this.player.x);
-    if (part <= this.currentPart) return;
-    this.currentPart = part;
-
-    const name = this.levelDef.parts[part - 1] ?? '';
-    this.scoreSys.addBonus(SCORE.partClear);
-    this.syncHud();
-    AudioManager.get().playSfx('powerup');
-    this.banner(this.player.x, this.player.y - 40, `PART ${part}`, '#9ad3c7');
-    this.floatText(this.player.x, this.player.y - 54, `+${SCORE.partClear}`, '#f4c430');
-    this.checkpointBurst(this.player.x, this.player.y, this.theme.accent);
-    // Let any checkpoint toast finish before announcing the sub-level.
-    this.time.delayedCall(1200, () => showToast(`PART ${part} · ${name}`, 'teal'));
-  }
-
-  /* ================================================================ */
   /* Thin ice (Frostfall Peaks)                                        */
   /* ================================================================ */
 
@@ -1237,9 +1191,15 @@ export class PlayScene extends Phaser.Scene implements GameplaySceneLike {
     this.syncHud();
 
     const before = SaveSystem.load().highestUnlockedWorld;
-    const { unlockedWorld } = SaveSystem.completeLevel(this.levelDef.id, this.levelDef.worldIndex);
+    const { unlockedWorld, next } = SaveSystem.completeLevel(
+      this.levelDef.id,
+      this.levelDef.worldIndex,
+      this.levelDef.levelIndex,
+    );
+    SaveSystem.update({ currentLevelId: next?.id ?? this.levelDef.id });
     SaveSystem.submitScore(this.scoreSys.score);
     hydrateFromSave(SaveSystem.load());
+    setUI({ nextLevelId: next?.id ?? null });
 
     AudioManager.get().playSfx('victory');
     this.cameras.main.flash(340, 255, 244, 210);
@@ -1248,6 +1208,8 @@ export class PlayScene extends Phaser.Scene implements GameplaySceneLike {
 
     if (unlockedWorld > before) {
       this.time.delayedCall(1500, () => showToast(`WORLD ${unlockedWorld} UNLOCKED`, 'gold'));
+    } else if (next) {
+      this.time.delayedCall(1500, () => showToast(`LEVEL ${next.levelIndex} UNLOCKED`, 'teal'));
     }
 
     this.time.delayedCall(1200, () => {
@@ -1411,8 +1373,8 @@ export class PlayScene extends Phaser.Scene implements GameplaySceneLike {
       ...(this.scoreSys ? this.scoreSys.snapshot() : {}),
       worldName: this.levelDef.worldName,
       levelName: this.levelDef.levelName,
-      part: this.currentPart,
-      parts: this.levelDef.parts.length,
+      levelIndex: this.levelDef.levelIndex,
+      levelsInWorld: this.levelDef.levelsInWorld,
     });
   }
 

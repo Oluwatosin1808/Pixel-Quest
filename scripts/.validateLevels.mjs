@@ -650,66 +650,185 @@ function buildForgottenKingdom() {
     playerStart: { x: tx(4), y: surface * TILE - 12 }
   });
 }
+function firstSurface(grid, col) {
+  if (col < 0 || col >= grid[0].length) return null;
+  for (let r = 0; r < grid.length; r++) if (grid[r][col] !== -1) return r;
+  return null;
+}
+function nearestStart(grid, preferred) {
+  const cols = grid[0].length;
+  if (firstSurface(grid, preferred) !== null) return preferred;
+  for (let d = 1; d < cols; d++) {
+    if (preferred + d < cols && firstSurface(grid, preferred + d) !== null) return preferred + d;
+    if (preferred - d >= 0 && firstSurface(grid, preferred - d) !== null) return preferred - d;
+  }
+  return preferred;
+}
+function exitColumn(grid, preferred) {
+  for (let c = Math.max(1, preferred); c >= 1; c--) {
+    if (firstSurface(grid, c) !== null) return c;
+  }
+  return Math.max(1, preferred);
+}
+function sliceLayout(full, c0, c1) {
+  const cols = Math.max(2, c1 - c0);
+  const grid = full.grid.map((row) => row.slice(c0, c1));
+  const dx = -c0 * TILE;
+  const inside = (x) => x >= c0 * TILE && x < c1 * TILE;
+  const startCol = nearestStart(grid, Math.min(4, cols - 2));
+  const exitCol = exitColumn(grid, cols - 3);
+  if (firstSurface(grid, exitCol) === null) {
+    const row = firstSurface(grid, startCol) ?? 18;
+    for (let c = Math.max(0, exitCol - 1); c <= Math.min(cols - 1, exitCol + 1); c++) {
+      for (let r = row; r < grid.length; r++) grid[c][r] = r === row ? 0 : 1;
+    }
+  }
+  const startRow = firstSurface(grid, startCol) ?? 18;
+  const exitRow = firstSurface(grid, exitCol) ?? startRow;
+  const playerStart = { x: tx(startCol), y: startRow * TILE - 12 };
+  const exit = { x: tx(exitCol), y: exitRow * TILE - 32 };
+  const move = (p) => ({ ...p, x: p.x + dx });
+  const checkpoints = full.checkpoints.filter((cp) => inside(cp.x)).map((cp, i) => ({ ...cp, index: i + 1, x: cp.x + dx }));
+  const zones = [
+    { p: playerStart, r: 100 },
+    ...checkpoints.map((cp) => ({ p: { x: cp.x, y: cp.y }, r: 100 })),
+    { p: exit, r: 36 }
+  ];
+  const safe = (p) => zones.every((z) => Math.hypot(p.x - z.p.x, p.y - z.p.y) >= z.r);
+  const enemies = full.enemies.filter((e) => inside(e.x)).map((e) => {
+    const minX = Math.max(0, e.minX + dx);
+    const maxX = Math.min(cols * TILE, e.maxX + dx);
+    return { ...e, x: e.x + dx, minX, maxX };
+  }).filter((e) => e.maxX - e.minX >= 8 && safe(e));
+  const pickups = full.pickups.filter((p) => inside(p.x)).map(move).filter(safe);
+  const thinIce = full.thinIce.filter((s) => inside(s.c0 * TILE)).map((s) => ({ ...s, c0: Math.max(0, s.c0 - c0), c1: Math.min(cols - 1, s.c1 - c0) })).filter(
+    (s) => s.c0 <= s.c1 && safe({ x: (s.c0 + s.c1 + 1) / 2 * TILE, y: s.row * TILE })
+  );
+  if (enemies.length === 0) {
+    const tint = full.enemies.find((e) => e.tint !== void 0)?.tint;
+    const middle = cols / 2;
+    const runs = [];
+    let run = null;
+    for (let c = 0; c < cols; c++) {
+      const r = firstSurface(grid, c);
+      const usable = r !== null && r > 0 && grid[r - 1][c] === -1;
+      if (usable && run && Math.abs(r - run.row) <= 1) {
+        run.c1 = c;
+      } else {
+        if (run) runs.push(run);
+        run = usable ? { c0: c, c1: c, row: r } : null;
+      }
+    }
+    if (run) runs.push(run);
+    const spot = runs.filter((p) => p.c1 > p.c0).map((p) => {
+      const c = Math.round((p.c0 + p.c1) / 2);
+      return { ...p, c, bias: Math.abs(c - middle) };
+    }).filter((p) => safe({ x: tx(p.c), y: p.row * TILE - 8 })).sort((a, b) => a.bias - b.bias)[0];
+    if (spot) {
+      enemies.push({
+        type: "slime",
+        x: tx(spot.c),
+        y: spot.row * TILE - 8,
+        minX: Math.max(0, spot.c0 * TILE + 6),
+        maxX: Math.min(cols * TILE, (spot.c1 + 1) * TILE - 6),
+        ...tint === void 0 ? {} : { tint }
+      });
+    }
+  }
+  return {
+    grid,
+    cols,
+    rows: full.rows,
+    tileKey: full.tileKey,
+    playerStart,
+    coins: full.coins.filter((p) => inside(p.x)).map(move),
+    enemies,
+    pickups,
+    thinIce,
+    crystal: full.crystal && inside(full.crystal.x) ? { ...full.crystal, x: full.crystal.x + dx } : null,
+    checkpoints,
+    exit,
+    decorations: full.decorations.filter((d) => inside(d.x)).map(move),
+    pitY: full.pitY
+  };
+}
 
 // src/game/config/levels.ts
-var LEVELS = [
+var WORLDS = [
   {
-    id: "ww_1",
+    id: "ww",
     worldIndex: 1,
-    worldName: "WORLD 1",
     levelName: "WHISPERING WOODS",
     subtitle: "Mist, moss and creeping slimes",
     theme: "forest",
     hint: "A/D MOVE\nSPACE JUMP\nJ SWORD",
-    parts: ["MEADOW PATH", "THE OLD BRIDGE", "MOSSY HOLLOW", "HILLTOP PASS", "DEEPWOOD SHADE"],
-    partBoundaries: [78, 105, 176, 203],
+    levelNames: ["MEADOW PATH", "THE OLD BRIDGE", "MOSSY HOLLOW", "HILLTOP PASS", "DEEPWOOD SHADE"],
+    splits: [78, 105, 180, 203],
     build: buildWhisperingWoods
   },
   {
-    id: "ec_1",
+    id: "ec",
     worldIndex: 2,
-    worldName: "WORLD 2",
     levelName: "EMBER CAVERNS",
     subtitle: "Molten rock and sleeping stone",
     theme: "cavern",
     hint: "MIND THE\nGLOWING GAP",
-    parts: ["EMBERS WAKE", "THE LAVA LAKE", "MOLTEN STAIRS", "SUNKEN FORGE", "MAGMA HEART"],
-    partBoundaries: [63, 111, 143, 168],
+    levelNames: ["EMBERS WAKE", "THE LAVA LAKE", "MOLTEN STAIRS", "SUNKEN FORGE", "MAGMA HEART"],
+    splits: [63, 111, 143, 168],
     build: buildEmberCaverns
   },
   {
-    id: "ff_1",
+    id: "ff",
     worldIndex: 3,
-    worldName: "WORLD 3",
     levelName: "FROSTFALL PEAKS",
     subtitle: "Thin air and sharper teeth",
     theme: "peaks",
     hint: "ICE HOLDS\nMOSTLY",
-    parts: ["FIRST LIGHT", "WINDWARD RIDGE", "ICE BOUND", "FROZEN CHASM", "SUMMIT STORM"],
-    partBoundaries: [53, 97, 129, 155],
+    levelNames: ["FIRST LIGHT", "WINDWARD RIDGE", "ICE BOUND", "FROZEN CHASM", "SUMMIT STORM"],
+    splits: [53, 97, 131, 155],
     build: buildFrostfallPeaks
   },
   {
-    id: "fk_1",
+    id: "fk",
     worldIndex: 4,
-    worldName: "WORLD 4",
     levelName: "THE FORGOTTEN KINGDOM",
     subtitle: "Ruins that remember your name",
     theme: "kingdom",
     hint: "THE RUINS\nREMEMBER",
-    parts: ["BROKEN GATE", "BATTLEMENT WALK", "HALL OF KINGS", "THE CAUSEWAY", "THE LAST COURT"],
-    partBoundaries: [59, 103, 141, 174],
+    levelNames: ["BROKEN GATE", "BATTLEMENT WALK", "HALL OF KINGS", "THE CAUSEWAY", "THE LAST COURT"],
+    splits: [59, 103, 141, 174],
     build: buildForgottenKingdom
   }
 ];
+var WORLD_COUNT = WORLDS.length;
+var LEVELS_PER_WORLD = 5;
+var LEVELS = WORLDS.flatMap(
+  (world) => world.levelNames.map((levelName, i) => ({
+    id: `${world.id}_${i + 1}`,
+    worldIndex: world.worldIndex,
+    worldTitle: world.levelName,
+    levelIndex: i + 1,
+    levelsInWorld: LEVELS_PER_WORLD,
+    worldName: `WORLD ${world.worldIndex}`,
+    levelName,
+    subtitle: world.subtitle,
+    theme: world.theme,
+    hint: world.hint,
+    build: () => {
+      const full = world.build();
+      const bounds = [0, ...world.splits, full.cols];
+      return sliceLayout(full, bounds[i], bounds[i + 1]);
+    }
+  }))
+);
 var LEVEL_IDS = new Set(LEVELS.map((l) => l.id));
-var CRYSTAL_IDS = new Set(LEVELS.map((l) => `${l.id.slice(0, 2)}_crystal_1`));
+var CRYSTAL_IDS = new Set(WORLDS.map((w) => `${w.id}_crystal_1`));
 
 // scripts/validateLevels.ts
 var errors = [];
 var warn = (level, msg) => errors.push(`[${level}] ${msg}`);
-var SAFE_SPAWN = 150;
-var SAFE_EXIT = 48;
+var SAFE_SPAWN = 100;
+var SAFE_EXIT = 36;
 var dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 function validate(levelId, layout, def) {
   const notes = [];
@@ -739,25 +858,14 @@ function validate(levelId, layout, def) {
   if (firstSolidBelow(spawnCol, Math.floor(layout.playerStart.y / TILE)) === -1) {
     warn(levelId, "player start has no ground beneath it");
   }
-  if (layout.checkpoints.length < 2) warn(levelId, `only ${layout.checkpoints.length} checkpoints`);
-  if (!layout.crystal) warn(levelId, "missing crystal");
   inBounds(layout.exit, "exit");
   if (firstSolidBelow(Math.floor(layout.exit.x / TILE), Math.floor(layout.exit.y / TILE), 6) === -1) {
     warn(levelId, "exit has no ground beneath it");
   }
-  if (def.parts.length < 4) warn(levelId, `expected at least 4 sub-levels, registry has ${def.parts.length}`);
-  const bounds = def.partBoundaries;
-  if (bounds.length !== def.parts.length - 1) {
-    warn(levelId, `expected ${def.parts.length - 1} part boundaries, registry has ${bounds.length}`);
-  } else {
-    let prev = 0;
-    for (const [i, col] of bounds.entries()) {
-      if (!Number.isInteger(col) || col <= prev || col >= cols) {
-        warn(levelId, `part boundary ${i + 1} (col ${col}) is out of order or out of bounds`);
-      }
-      prev = col;
-    }
+  if (def.levelIndex < 1 || def.levelIndex > def.levelsInWorld) {
+    warn(levelId, `stage index ${def.levelIndex} outside 1..${def.levelsInWorld}`);
   }
+  if (def.levelName.length === 0) warn(levelId, "missing stage name");
   const dangerZones = [
     { p: layout.playerStart, radius: SAFE_SPAWN, name: "spawn" },
     ...layout.checkpoints.map((cp, i) => ({ p: cp, radius: SAFE_SPAWN, name: `checkpoint ${i + 1}` })),
@@ -876,7 +984,28 @@ for (const def of LEVELS) {
   const before = errors.length;
   const notes = validate(def.id, def.build(), def);
   const status = errors.length === before ? "OK  " : "FAIL";
-  console.log(` ${status} ${def.id.padEnd(6)} ${def.levelName.padEnd(18)} ${notes.join(" | ")}`);
+  console.log(` ${status} ${def.id.padEnd(6)} ${def.levelName.padEnd(20)} ${notes.join(" | ")}`);
+}
+var ids = /* @__PURE__ */ new Set();
+for (const def of LEVELS) {
+  if (ids.has(def.id)) warn(def.id, "duplicate level id");
+  ids.add(def.id);
+}
+for (let world = 1; world <= WORLD_COUNT; world++) {
+  const stages = LEVELS.filter((l) => l.worldIndex === world);
+  if (stages.length !== LEVELS_PER_WORLD) {
+    warn(`world ${world}`, `expected ${LEVELS_PER_WORLD} stages, registry has ${stages.length}`);
+    continue;
+  }
+  for (let i = 0; i < LEVELS_PER_WORLD; i++) {
+    if (stages[i].levelIndex !== i + 1) {
+      warn(`world ${world}`, `stage ${i + 1} has levelIndex ${stages[i].levelIndex}`);
+    }
+  }
+  const crystals = stages.filter((l) => l.build().crystal !== null);
+  if (crystals.length !== 1) {
+    warn(`world ${world}`, `expected 1 crystal across its stages, found ${crystals.length}`);
+  }
 }
 console.log("");
 if (errors.length > 0) {

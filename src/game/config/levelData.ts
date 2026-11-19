@@ -916,3 +916,152 @@ export function buildForgottenKingdom(): LevelLayout {
     playerStart: { x: tx(4), y: surface * TILE - 12 },
   });
 }
+
+/* ================================================================== */
+/* Standalone stages — slice a world map into sequential levels         */
+/* ================================================================== */
+
+function firstSurface(grid: number[][], col: number): number | null {
+  if (col < 0 || col >= grid[0].length) return null;
+  for (let r = 0; r < grid.length; r++) if (grid[r][col] !== -1) return r;
+  return null;
+}
+
+/** Find the nearest column with terrain, preferring the right-hand side. */
+function nearestStart(grid: number[][], preferred: number): number {
+  const cols = grid[0].length;
+  if (firstSurface(grid, preferred) !== null) return preferred;
+  for (let d = 1; d < cols; d++) {
+    if (preferred + d < cols && firstSurface(grid, preferred + d) !== null) return preferred + d;
+    if (preferred - d >= 0 && firstSurface(grid, preferred - d) !== null) return preferred - d;
+  }
+  return preferred;
+}
+
+/** Walk back from the right edge until a column with a floor is found. */
+function exitColumn(grid: number[][], preferred: number): number {
+  for (let c = Math.max(1, preferred); c >= 1; c--) {
+    if (firstSurface(grid, c) !== null) return c;
+  }
+  return Math.max(1, preferred);
+}
+
+/**
+ * Turn a slice of a full world layout into a self-contained level: terrain and
+ * every spawn are rebased to column 0, with a safe start and exit at the ends.
+ * This lets one hand-authored world become several sequential stages without
+ * duplicating its map data.
+ */
+export function sliceLayout(full: LevelLayout, c0: number, c1: number): LevelLayout {
+  const cols = Math.max(2, c1 - c0);
+  const grid = full.grid.map((row) => row.slice(c0, c1));
+  const dx = -c0 * TILE;
+  const inside = (x: number): boolean => x >= c0 * TILE && x < c1 * TILE;
+
+  const startCol = nearestStart(grid, Math.min(4, cols - 2));
+  const exitCol = exitColumn(grid, cols - 3);
+
+  // A slice may end over a pit — lay a small ledge so the exit is standable.
+  if (firstSurface(grid, exitCol) === null) {
+    const row = firstSurface(grid, startCol) ?? 18;
+    for (let c = Math.max(0, exitCol - 1); c <= Math.min(cols - 1, exitCol + 1); c++) {
+      for (let r = row; r < grid.length; r++) grid[c][r] = r === row ? 0 : 1;
+    }
+  }
+
+  const startRow = firstSurface(grid, startCol) ?? 18;
+  const exitRow = firstSurface(grid, exitCol) ?? startRow;
+  const playerStart = { x: tx(startCol), y: startRow * TILE - 12 };
+  const exit = { x: tx(exitCol), y: exitRow * TILE - 32 };
+  const move = <T extends SpawnPoint>(p: T): T => ({ ...p, x: p.x + dx });
+
+  const checkpoints = full.checkpoints
+    .filter((cp) => inside(cp.x))
+    .map((cp, i) => ({ ...cp, index: i + 1, x: cp.x + dx }));
+
+  // A spawn that a slice lands on top of would be unfair at the new start,
+  // exit or checkpoint, so drop it and let the remaining patrols carry the level.
+  const zones = [
+    { p: playerStart, r: 100 },
+    ...checkpoints.map((cp) => ({ p: { x: cp.x, y: cp.y }, r: 100 })),
+    { p: exit, r: 36 },
+  ];
+  const safe = (p: SpawnPoint): boolean => zones.every((z) => Math.hypot(p.x - z.p.x, p.y - z.p.y) >= z.r);
+
+  const enemies = full.enemies
+    .filter((e) => inside(e.x))
+    .map((e) => {
+      const minX = Math.max(0, e.minX + dx);
+      const maxX = Math.min(cols * TILE, e.maxX + dx);
+      return { ...e, x: e.x + dx, minX, maxX };
+    })
+    .filter((e) => e.maxX - e.minX >= 8 && safe(e));
+
+  const pickups = full.pickups.filter((p) => inside(p.x)).map(move).filter(safe);
+
+  const thinIce = full.thinIce
+    .filter((s) => inside(s.c0 * TILE))
+    .map((s) => ({ ...s, c0: Math.max(0, s.c0 - c0), c1: Math.min(cols - 1, s.c1 - c0) }))
+    .filter(
+      (s) =>
+        s.c0 <= s.c1 && safe({ x: ((s.c0 + s.c1 + 1) / 2) * TILE, y: s.row * TILE }),
+    );
+
+  // A short slice can land entirely inside the safety zones of its new start,
+  // exit and checkpoints, stripping out every authored patrol. Lay down one
+  // guard on a safe platform near the middle so the stage is still a level.
+  if (enemies.length === 0) {
+    const tint = full.enemies.find((e) => e.tint !== undefined)?.tint;
+    const middle = cols / 2;
+    const runs: Array<{ c0: number; c1: number; row: number }> = [];
+    let run: { c0: number; c1: number; row: number } | null = null;
+    for (let c = 0; c < cols; c++) {
+      const r = firstSurface(grid, c);
+      const usable = r !== null && r > 0 && grid[r - 1][c] === -1;
+      if (usable && run && Math.abs(r - run.row) <= 1) {
+        run.c1 = c;
+      } else {
+        if (run) runs.push(run);
+        run = usable ? { c0: c, c1: c, row: r } : null;
+      }
+    }
+    if (run) runs.push(run);
+
+    const spot = runs
+      .filter((p) => p.c1 > p.c0)
+      .map((p) => {
+        const c = Math.round((p.c0 + p.c1) / 2);
+        return { ...p, c, bias: Math.abs(c - middle) };
+      })
+      .filter((p) => safe({ x: tx(p.c), y: p.row * TILE - 8 }))
+      .sort((a, b) => a.bias - b.bias)[0];
+
+    if (spot) {
+      enemies.push({
+        type: 'slime',
+        x: tx(spot.c),
+        y: spot.row * TILE - 8,
+        minX: Math.max(0, spot.c0 * TILE + 6),
+        maxX: Math.min(cols * TILE, (spot.c1 + 1) * TILE - 6),
+        ...(tint === undefined ? {} : { tint }),
+      });
+    }
+  }
+
+  return {
+    grid,
+    cols,
+    rows: full.rows,
+    tileKey: full.tileKey,
+    playerStart,
+    coins: full.coins.filter((p) => inside(p.x)).map(move),
+    enemies,
+    pickups,
+    thinIce,
+    crystal: full.crystal && inside(full.crystal.x) ? { ...full.crystal, x: full.crystal.x + dx } : null,
+    checkpoints,
+    exit,
+    decorations: full.decorations.filter((d) => inside(d.x)).map(move),
+    pitY: full.pitY,
+  };
+}

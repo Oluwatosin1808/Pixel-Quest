@@ -11,7 +11,7 @@ Cross four worlds, recover crystal fragments, defeat slimes and bats, and restor
 3. **Frostfall Peaks** — thin air, sharper teeth, and thin ice
 4. **The Forgotten Kingdom** — ruins that remember your name
 
-Each world is split into **five sub-levels** with checkpoints, pickups (hearts, shield, speed boots), coins, and a world crystal. Enemies get faster, more alert, and tougher with every sub-level you enter — and later worlds start on a higher difficulty tier with denser patrols, so the challenge keeps rising from World 1 through World 4.
+Each world has **five separate levels**. Clear one to unlock the next; clearing a world's fifth level opens the following world. Every level has its own start and exit, checkpoints, pickups (hearts, shield, speed boots), coins, and one world crystal somewhere in the set. Enemies get faster, more alert, and tougher with every level — and later worlds start on a higher difficulty tier with denser patrols, so the challenge keeps rising from World 1 through World 4. Use the level select screen to replay any stage you have unlocked.
 
 ## Controls
 
