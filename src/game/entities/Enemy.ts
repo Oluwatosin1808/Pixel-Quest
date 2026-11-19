@@ -7,6 +7,9 @@ export interface EnemyOptions {
   maxX: number;
   maxHealth?: number;
   aggroRange?: number;
+  /** Per-enemy movement tuning (defaults to the global ENEMY values). */
+  patrolSpeed?: number;
+  chaseSpeed?: number;
   /** Constant colour shift so a world's enemies match its scenery. */
   baseTint?: number;
 }
@@ -17,13 +20,15 @@ export interface EnemyOptions {
  */
 export abstract class Enemy extends Phaser.Physics.Arcade.Sprite {
   readonly health: HealthSystem;
-  readonly scoreValue: number = SCORE.enemy;
+  scoreValue: number = SCORE.enemy;
   dead = false;
   facing: 1 | -1 = -1;
 
   protected readonly patrolMinX: number;
   protected readonly patrolMaxX: number;
   protected readonly aggroRange: number;
+  protected readonly patrolSpeed: number;
+  protected readonly chaseSpeed: number;
   protected baseTint: number | null;
   protected aiState: 'patrol' | 'chase' | 'hurt' | 'dead' = 'patrol';
   protected hurtUntil = -Infinity;
@@ -40,6 +45,8 @@ export abstract class Enemy extends Phaser.Physics.Arcade.Sprite {
     this.patrolMinX = options.minX;
     this.patrolMaxX = options.maxX;
     this.aggroRange = options.aggroRange ?? ENEMY.aggroRange;
+    this.patrolSpeed = options.patrolSpeed ?? ENEMY.patrolSpeed;
+    this.chaseSpeed = options.chaseSpeed ?? ENEMY.chaseSpeed;
     this.baseTint = options.baseTint ?? null;
     if (this.baseTint !== null) this.setTint(this.baseTint);
     this.setDepth(y);
@@ -115,6 +122,9 @@ export abstract class Enemy extends Phaser.Physics.Arcade.Sprite {
     return this.dead ? 0 : ENEMY.contactDamage;
   }
 
+  /** Per-frame AI update; implemented by every enemy type. */
+  abstract updateEnemy(time: number, target: { x: number; y: number; dead: boolean } | null): void;
+
   /** Shared movement logic: patrol bounds + chase when the player is close. */
   protected moveToward(time: number, target: { x: number; y: number; dead?: boolean } | null): void {
     if (this.dead) return;
@@ -135,12 +145,19 @@ export abstract class Enemy extends Phaser.Physics.Arcade.Sprite {
     if (chasing && target) {
       this.aiState = 'chase';
       this.facing = target.x > this.x ? 1 : -1;
-      this.setVelocityX(this.facing * ENEMY.chaseSpeed);
+      // Leash: an enemy may chase a little past its patrol strip, but never
+      // far enough to camp the spawn or a checkpoint on the player's respawn.
+      const leashMin = this.patrolMinX - ENEMY.leash;
+      const leashMax = this.patrolMaxX + ENEMY.leash;
+      const vx = this.facing * this.chaseSpeed;
+      this.setVelocityX(
+        this.facing === 1 && this.x >= leashMax ? 0 : this.facing === -1 && this.x <= leashMin ? 0 : vx,
+      );
     } else {
       this.aiState = 'patrol';
       if (this.x <= this.patrolMinX) this.facing = 1;
       else if (this.x >= this.patrolMaxX) this.facing = -1;
-      this.setVelocityX(this.facing * ENEMY.patrolSpeed);
+      this.setVelocityX(this.facing * this.patrolSpeed);
     }
 
     this.setFlipX(this.facing === -1);

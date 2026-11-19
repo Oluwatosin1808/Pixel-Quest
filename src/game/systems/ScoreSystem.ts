@@ -22,8 +22,8 @@ export class ScoreSystem {
     this.sync();
   }
 
-  addEnemyKill(): void {
-    this.score += SCORE.enemy;
+  addEnemyKill(points: number = SCORE.enemy): void {
+    this.score += points;
     this.sync();
   }
 

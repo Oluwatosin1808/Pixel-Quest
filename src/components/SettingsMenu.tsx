@@ -4,6 +4,7 @@ import { setPhase, setUI, useUI } from '../store/uiStore';
 import { SaveSystem } from '../game/systems/SaveSystem';
 import { AudioManager } from '../game/systems/AudioManager';
 import { setSettings } from '../store/uiStore';
+import { enterFullscreen, exitFullscreen, isFullscreen, onFullscreenChange, supportsFullscreen } from '../utils/fullscreen';
 import { PixelButton } from './PixelButton';
 
 /** Audio preferences + save-data reset (with a two-step confirm). */
@@ -12,6 +13,7 @@ export function SettingsMenu() {
   const notice = useUI((s) => s.notice);
   const returnTo = useUI((s) => s.settingsReturn);
   const [confirming, setConfirming] = useState(false);
+  const [fullscreen, setFullscreen] = useState(isFullscreen);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
@@ -24,6 +26,10 @@ export function SettingsMenu() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [returnTo]);
+
+  // Keep the toggle in sync when the user leaves fullscreen via the
+  // browser's own controls (Esc, swipe gesture, ...).
+  useEffect(() => onFullscreenChange(() => setFullscreen(isFullscreen())), []);
 
   // Any change is persisted immediately and applied to the live audio manager.
   const update = (patch: Partial<typeof settings>): void => {
@@ -100,6 +106,23 @@ export function SettingsMenu() {
             />
             <span className="settings__value">{Math.round(settings.sfxVolume * 100)}</span>
           </div>
+
+          {supportsFullscreen() && (
+            <div className="settings__row">
+              <span className="settings__label">FULLSCREEN</span>
+              <button
+                type="button"
+                className={`toggle ${fullscreen ? 'is-on' : ''}`}
+                aria-pressed={fullscreen}
+                onClick={() => {
+                  if (fullscreen) void exitFullscreen();
+                  else void enterFullscreen().then(() => setFullscreen(isFullscreen()));
+                }}
+              >
+                {fullscreen ? 'ON' : 'OFF'}
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="settings__danger">

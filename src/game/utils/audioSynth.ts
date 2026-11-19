@@ -266,6 +266,46 @@ function sfxNotes(name: string): { notes: NoteSpec[]; total: number } {
         ],
         total: 0.28,
       };
+    case 'powerup':
+      return {
+        notes: [
+          { t: 0, dur: 0.07, freq: noteFreq('C5'), wave: 'square', vol: 0.4 },
+          { t: 0.07, dur: 0.07, freq: noteFreq('E5'), wave: 'square', vol: 0.4 },
+          { t: 0.14, dur: 0.07, freq: noteFreq('G5'), wave: 'square', vol: 0.4 },
+          { t: 0.21, dur: 0.07, freq: noteFreq('B5'), wave: 'square', vol: 0.42 },
+          { t: 0.28, dur: 0.34, freq: noteFreq('E6'), wave: 'triangle', vol: 0.45, decay: 0.6 },
+          { t: 0.28, dur: 0.34, freq: noteFreq('B5'), wave: 'sine', vol: 0.3, decay: 0.6 },
+        ],
+        total: 0.64,
+      };
+    case 'heal':
+      return {
+        notes: [
+          { t: 0, dur: 0.1, freq: noteFreq('E5'), wave: 'sine', vol: 0.4 },
+          { t: 0.09, dur: 0.1, freq: noteFreq('G5'), wave: 'sine', vol: 0.4 },
+          { t: 0.18, dur: 0.3, freq: noteFreq('B5'), wave: 'sine', vol: 0.42, decay: 0.7 },
+          { t: 0.18, dur: 0.3, freq: noteFreq('E6'), wave: 'triangle', vol: 0.2, decay: 0.7 },
+        ],
+        total: 0.52,
+      };
+    case 'crack':
+      return {
+        notes: [
+          { t: 0, dur: 0.06, freq: 3200, freq2: 1500, wave: 'noise', vol: 0.34, decay: 2.4 },
+          { t: 0.05, dur: 0.07, freq: 2100, freq2: 800, wave: 'noise', vol: 0.3, decay: 2.6 },
+        ],
+        total: 0.16,
+      };
+    case 'shatter':
+      return {
+        notes: [
+          { t: 0, dur: 0.12, freq: 4200, freq2: 1200, wave: 'noise', vol: 0.5, decay: 1.6 },
+          { t: 0.02, dur: 0.2, freq: 900, freq2: 260, wave: 'square', vol: 0.24, decay: 1.8 },
+          { t: 0.1, dur: 0.3, freq: 2600, freq2: 700, wave: 'noise', vol: 0.3, decay: 2.2 },
+          { t: 0.16, dur: 0.3, freq: noteFreq('E6'), wave: 'triangle', vol: 0.2, decay: 1.4 },
+        ],
+        total: 0.52,
+      };
     default:
       return { notes: [], total: 0.1 };
   }

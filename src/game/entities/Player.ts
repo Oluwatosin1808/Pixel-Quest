@@ -40,6 +40,7 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
   private deathStartedAt = -Infinity;
   private deathHandled = false;
   private invulnBlink = false;
+  private speedBoostUntil = -Infinity;
 
   constructor(scene: Phaser.Scene, x: number, y: number) {
     super(scene, x, y, 'player_idle', 'f0');
@@ -64,6 +65,16 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
 
   get isStunned(): boolean {
     return this.stunUntil > this.scene.time.now;
+  }
+
+  /** True while the speed-boost power-up is running. */
+  get isSpeedBoosted(): boolean {
+    return this.scene.time.now < this.speedBoostUntil;
+  }
+
+  /** Grant a burst of movement speed for `durationMs`. */
+  applySpeedBoost(durationMs: number): void {
+    this.speedBoostUntil = Math.max(this.speedBoostUntil, this.scene.time.now + durationMs);
   }
 
   /* ---------------- Combat interface (used by the scene) ---------------- */
@@ -178,6 +189,7 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     let speed = PLAYER.runSpeed;
+    if (time < this.speedBoostUntil) speed *= 1.55;
     if (!onFloor) speed *= PLAYER.airRunFactor;
     if (this.attacking) speed *= PLAYER.attackMoveFactor;
     if (!stunnedNow || onFloor) {

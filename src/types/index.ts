@@ -22,6 +22,9 @@ export interface HudState {
   crystalsTotal: number;
   worldName: string;
   levelName: string;
+  /** Sub-level currently being played (1-based) and how many the level has. */
+  part: number;
+  parts: number;
 }
 
 /** Persisted audio / display preferences. */

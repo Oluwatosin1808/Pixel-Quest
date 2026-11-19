@@ -15,11 +15,32 @@ export type SfxName =
   | 'gameover'
   | 'click'
   | 'select'
-  | 'locked';
+  | 'locked'
+  | 'powerup'
+  | 'heal'
+  | 'crack'
+  | 'shatter';
 
 export type MusicName = 'menu' | 'level';
 
-const SFX_NAMES: SfxName[] = ['coin', 'sword', 'hit', 'hurt', 'jump', 'crystal', 'checkpoint', 'victory', 'gameover', 'click', 'select', 'locked'];
+const SFX_NAMES: SfxName[] = [
+  'coin',
+  'sword',
+  'hit',
+  'hurt',
+  'jump',
+  'crystal',
+  'checkpoint',
+  'victory',
+  'gameover',
+  'click',
+  'select',
+  'locked',
+  'powerup',
+  'heal',
+  'crack',
+  'shatter',
+];
 
 /**
  * Audio manager built on Howler.js. All clips are synthesised at runtime

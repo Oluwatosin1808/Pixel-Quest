@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useUI } from './store/uiStore';
+import { enterFullscreen, isCoarsePointer, isFullscreen, supportsFullscreen } from './utils/fullscreen';
 import { GameCanvas } from './components/GameCanvas';
 import { MainMenu } from './components/MainMenu';
 import { WorldSelect } from './components/WorldSelect';
@@ -26,6 +27,26 @@ export default function App() {
     };
     document.addEventListener('touchmove', prevent, { passive: false });
     return () => document.removeEventListener('touchmove', prevent);
+  }, []);
+
+  // On touch devices, the very first tap goes fullscreen so the browser
+  // chrome (URL bar) disappears and the game fills the whole screen.
+  useEffect(() => {
+    if (!isCoarsePointer() || !supportsFullscreen()) return;
+    let attempted = false;
+    const onFirstGesture = (): void => {
+      if (attempted) return;
+      attempted = true;
+      window.removeEventListener('pointerdown', onFirstGesture, true);
+      window.removeEventListener('touchstart', onFirstGesture, true);
+      if (!isFullscreen()) void enterFullscreen();
+    };
+    window.addEventListener('pointerdown', onFirstGesture, { capture: true, passive: true });
+    window.addEventListener('touchstart', onFirstGesture, { capture: true, passive: true });
+    return () => {
+      window.removeEventListener('pointerdown', onFirstGesture, true);
+      window.removeEventListener('touchstart', onFirstGesture, true);
+    };
   }, []);
 
   return (

@@ -92,6 +92,43 @@ function makeImage(scene: Phaser.Scene, key: string, width: number, height: numb
   scene.textures.addCanvas(key, canvas);
 }
 
+/**
+ * Nearest-neighbour upscale of an existing sheet (used for the elite
+ * slime). Frames keep the f0..f(n-1) naming of the source sheet, and an
+ * optional `post` pass can redraw details (eyes, markings) afterwards.
+ */
+function makeScaledSheet(
+  scene: Phaser.Scene,
+  srcKey: string,
+  key: string,
+  frameWidth: number,
+  frameHeight: number,
+  count: number,
+  scale: number,
+  post?: (ctx: Ctx, index: number, frameW: number, frameH: number) => void,
+): void {
+  if (scene.textures.exists(key)) return;
+  const source = scene.textures.get(srcKey);
+  if (!source) return;
+  const image = source.getSourceImage() as HTMLCanvasElement;
+  const w = Math.round(frameWidth * scale);
+  const h = Math.round(frameHeight * scale);
+  const { canvas, ctx } = createCanvas(w * count, h);
+  ctx.imageSmoothingEnabled = false;
+  for (let i = 0; i < count; i++) {
+    ctx.save();
+    ctx.translate(i * w, 0);
+    ctx.drawImage(image, i * frameWidth, 0, frameWidth, frameHeight, 0, 0, w, h);
+    post?.(ctx, i, w, h);
+    ctx.restore();
+  }
+  const texture = scene.textures.addCanvas(key, canvas);
+  if (!texture) return;
+  for (let i = 0; i < count; i++) {
+    texture.add(`f${i}`, 0, i * w, 0, w, h);
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* Adventurer                                                          */
 /* ------------------------------------------------------------------ */
@@ -258,7 +295,7 @@ function drawAdventurer(ctx: Ctx, pose: Pose): void {
 }
 
 /* ------------------------------------------------------------------ */
-/* Slime                                                               */
+/* Enemies                                                             */
 /* ------------------------------------------------------------------ */
 
 function drawSlime(ctx: Ctx, index: number): void {
@@ -303,6 +340,179 @@ function drawSlime(ctx: Ctx, index: number): void {
   // Feet nubs
   rect(ctx, cx - halfWidth + 1, top + height, 3, 1, PAL.ink);
   rect(ctx, cx + halfWidth - 3, top + height, 3, 1, PAL.ink);
+}
+
+/**
+ * Bat — 16x12 frame with three flap poses (wings up / mid / down).
+ * The body stays put while the membranes step vertically, so the sheet
+ * reads as a single flapping creature when animated.
+ */
+function drawBat(ctx: Ctx, index: number): void {
+  const top = [1, 3, 5][index] ?? 3;
+  const dark = '#241a2e';
+  const mid = '#3a2b47';
+  const membrane = '#5a3d66';
+  const bone = '#b9b3c9';
+  const eye = '#ff5a4a';
+
+  // Wings: four stepped rows reaching out from the body on both sides.
+  const reaches = [3, 4, 5, 6];
+  for (let r = 0; r < 4; r++) {
+    const y = top + r;
+    const reach = reaches[r];
+    for (const dir of [-1, 1]) {
+      for (let k = 0; k < reach; k++) {
+        const x = dir === -1 ? 7 - k : 8 + k;
+        if (x < 0 || x > 15) continue;
+        // Scalloped trailing edge on the bottom row.
+        if (r === 3 && k === reach - 1) continue;
+        rect(ctx, x, y, 1, 1, r < 2 ? membrane : mid);
+      }
+      // Pale wing bone along the leading edge.
+      const boneX = dir === -1 ? 7 - reach + 1 : 8 + reach - 2;
+      rect(ctx, boneX, y, 1, 1, bone);
+    }
+  }
+
+  // Body + head
+  rect(ctx, 6, top, 1, 1, dark); // ears
+  rect(ctx, 9, top, 1, 1, dark);
+  rect(ctx, 6, top + 1, 4, 6, dark);
+  rect(ctx, 7, top + 2, 2, 4, mid);
+  // Eyes + fangs
+  rect(ctx, 6, top + 3, 1, 1, eye);
+  rect(ctx, 9, top + 3, 1, 1, eye);
+  rect(ctx, 7, top + 6, 1, 1, bone);
+  rect(ctx, 8, top + 6, 1, 1, bone);
+  // Belly outline
+  rect(ctx, 6, top + 7, 4, 1, PAL.ink);
+}
+
+/* ------------------------------------------------------------------ */
+/* Power-ups                                                           */
+/* ------------------------------------------------------------------ */
+
+/** Implicit heart curve plotted at two scales for a crisp outline. */
+function plotHeart(ctx: Ctx, scale: number, color: string): void {
+  const cx = 6.5;
+  const cy = 6;
+  for (let y = 0; y < 13; y++) {
+    for (let x = 0; x < 14; x++) {
+      const hx = (x + 0.5 - cx) / scale;
+      const hy = -(y + 0.5 - cy) / scale;
+      const f = Math.pow(hx * hx + hy * hy - 1, 3) - hx * hx * hy * hy * hy;
+      if (f <= 0) pixel(ctx, x, y, color);
+    }
+  }
+}
+
+function drawHeartPower(ctx: Ctx, index: number): void {
+  plotHeart(ctx, 5.6, PAL.ink);
+  plotHeart(ctx, 4.7, '#d8443a');
+  // Shading: light lobe top-left, shadow bottom-right.
+  for (let y = 0; y < 13; y++) {
+    for (let x = 0; x < 14; x++) {
+      const hx = (x + 0.5 - 6.5) / 4.7;
+      const hy = -(y + 0.5 - 6) / 4.7;
+      const f = Math.pow(hx * hx + hy * hy - 1, 3) - hx * hx * hy * hy * hy;
+      if (f > 0) continue;
+      if (x < 5 && y < 6) pixel(ctx, x, y, '#ff8a7a');
+      else if (y > 8) pixel(ctx, x, y, PAL.blood);
+    }
+  }
+  // Shimmer frame: a bright glint that slides across the heart.
+  rect(ctx, index === 1 ? 8 : 4, 3, 2, 1, '#ffd9d2');
+}
+
+function drawShieldPower(ctx: Ctx, index: number): void {
+  const W = 14;
+  const H = 16;
+  for (let y = 0; y < H; y++) {
+    const t = y / (H - 1);
+    const half = t < 0.5 ? 5.6 : 5.6 * (1 - (t - 0.5) * 1.7);
+    if (half < 1) continue;
+    for (let x = 0; x < W; x++) {
+      const dx = Math.abs(x + 0.5 - W / 2);
+      if (dx > half + 0.9) continue;
+      let color: string = PAL.steel;
+      if (dx > half - 0.6) color = PAL.ink;
+      else if (y > H * 0.55) color = PAL.steelDark;
+      else if (dx < 2 && y < 3) color = PAL.white;
+      pixel(ctx, x, y, color);
+    }
+  }
+  // Emblem: a teal diamond that catches the light on the shimmer frame.
+  const glow = index === 1 ? '#d7f2ec' : PAL.tealPale;
+  rect(ctx, 6, 5, 2, 2, glow);
+  rect(ctx, 5, 6, 4, 1, glow);
+  rect(ctx, 6, 7, 2, 2, glow);
+  rect(ctx, 6, 11, 2, 1, PAL.gold);
+}
+
+function drawBootsPower(ctx: Ctx, index: number): void {
+  // Shaft
+  rect(ctx, 4, 2, 5, 8, PAL.brown);
+  rect(ctx, 4, 2, 5, 1, PAL.brownLight);
+  rect(ctx, 8, 3, 1, 7, PAL.bark);
+  // Cuff
+  rect(ctx, 3, 1, 7, 2, PAL.brownLight);
+  rect(ctx, 3, 3, 7, 1, PAL.bark);
+  // Foot + sole
+  rect(ctx, 4, 10, 8, 2, PAL.brown);
+  rect(ctx, 4, 12, 10, 2, PAL.bark);
+  rect(ctx, 4, 13, 10, 1, PAL.barkDark);
+  // Gold buckle
+  rect(ctx, 5, 6, 3, 2, PAL.gold);
+  pixel(ctx, 6, 6, PAL.goldLight);
+  // Speed glint (moves between frames)
+  rect(ctx, index === 1 ? 11 : 2, 8, 2, 1, PAL.goldLight);
+}
+
+/* ------------------------------------------------------------------ */
+/* Thin ice (Frostfall Peaks)                                          */
+/* ------------------------------------------------------------------ */
+
+function drawIceCrack(ctx: Ctx): void {
+  const line1: Array<[number, number]> = [
+    [1, 3], [2, 4], [3, 4], [4, 5], [5, 6], [6, 6], [7, 7], [8, 7], [9, 8], [10, 9], [11, 9], [12, 10], [13, 11],
+  ];
+  const line2: Array<[number, number]> = [
+    [4, 1], [5, 2], [6, 3], [6, 4], [7, 5], [7, 6], [8, 7], [8, 8], [9, 9], [9, 10], [10, 11], [10, 12], [11, 13],
+  ];
+  const line3: Array<[number, number]> = [
+    [2, 12], [3, 11], [4, 11], [5, 10], [6, 10], [7, 9],
+  ];
+  for (const [x, y] of [...line1, ...line2, ...line3]) {
+    pixel(ctx, x, y, '#e8f6fb');
+    pixel(ctx, x + 1, y, '#9fd6e8');
+  }
+  // Frosted chips near the seams
+  pixel(ctx, 3, 6, '#ffffff');
+  pixel(ctx, 11, 6, '#ffffff');
+  pixel(ctx, 7, 12, '#ffffff');
+}
+
+function drawIceHole(ctx: Ctx): void {
+  // Dark water beneath, with a jagged rim of surviving ice.
+  rect(ctx, 0, 0, 16, 16, '#0b1622');
+  rect(ctx, 1, 1, 14, 14, '#122536');
+  rect(ctx, 2, 2, 12, 12, '#0e1d2c');
+  // Rim shards
+  const rim: Array<[number, number, number, number]> = [
+    [0, 0, 16, 1], [0, 15, 16, 1], [0, 0, 1, 16], [15, 0, 1, 16],
+  ];
+  for (const [x, y, w, h] of rim) rect(ctx, x, y, w, h, '#9fd6e8');
+  rect(ctx, 0, 0, 16, 1, '#e8f6fb');
+  rect(ctx, 0, 15, 16, 1, '#4d7f96');
+  // Broken teeth of ice clinging to the edge
+  rect(ctx, 3, 1, 2, 1, '#e8f6fb');
+  rect(ctx, 9, 1, 3, 1, '#e8f6fb');
+  rect(ctx, 1, 4, 1, 3, '#e8f6fb');
+  rect(ctx, 14, 8, 1, 3, '#e8f6fb');
+  rect(ctx, 6, 14, 3, 1, '#e8f6fb');
+  // A cold glint deep in the water
+  pixel(ctx, 5, 9, '#2b4a63');
+  pixel(ctx, 10, 6, '#2b4a63');
 }
 
 /* ------------------------------------------------------------------ */
@@ -1157,76 +1367,83 @@ function drawPeaksAurora(ctx: Ctx, _width: number, height: number): void {
 /* --- World 4: The Forgotten Kingdom --------------------------------- */
 
 function drawTilesKingdom(ctx: Ctx): void {
-  // f0: mossy flagstone
-  rect(ctx, 0, 0, 16, 16, '#4b4f42');
-  rect(ctx, 0, 0, 16, 2, '#6f8a4e');
-  rect(ctx, 0, 2, 16, 1, '#4f6a3a');
-  rect(ctx, 0, 3, 16, 1, '#3c4a33');
-  rect(ctx, 3, 7, 4, 1, '#5d6353');
-  rect(ctx, 11, 9, 3, 1, '#3c4237');
-  rect(ctx, 6, 12, 2, 1, '#5d6353');
-  pixel(ctx, 1, 10, '#7f8a6a');
-  pixel(ctx, 9, 14, '#33382d');
-  rect(ctx, 0, 15, 16, 1, '#2e3329');
+  // f0: mossy flagstone (weathered dark)
+  rect(ctx, 0, 0, 16, 16, '#3d4136');
+  rect(ctx, 0, 0, 16, 2, '#5a7040');
+  rect(ctx, 0, 2, 16, 1, '#415730');
+  rect(ctx, 0, 3, 16, 1, '#323d2b');
+  rect(ctx, 3, 7, 4, 1, '#4d5245');
+  rect(ctx, 11, 9, 3, 1, '#32372f');
+  rect(ctx, 6, 12, 2, 1, '#4d5245');
+  pixel(ctx, 1, 10, '#69735a');
+  pixel(ctx, 9, 14, '#2b2f26');
+  rect(ctx, 0, 15, 16, 1, '#262a22');
 
   // f1: weathered stone fill
-  rect(ctx, 16, 0, 16, 16, '#4b4f42');
-  rect(ctx, 18, 3, 4, 2, '#5d6353');
-  rect(ctx, 26, 6, 4, 2, '#3c4237');
-  rect(ctx, 20, 10, 3, 1, '#5d6353');
-  rect(ctx, 28, 12, 3, 2, '#69705c');
-  rect(ctx, 23, 14, 4, 1, '#3c4237');
-  pixel(ctx, 31, 2, '#69705c');
-  pixel(ctx, 17, 12, '#69705c');
-  pixel(ctx, 25, 8, '#2e3329');
+  rect(ctx, 16, 0, 16, 16, '#3d4136');
+  rect(ctx, 18, 3, 4, 2, '#4d5245');
+  rect(ctx, 26, 6, 4, 2, '#32372f');
+  rect(ctx, 20, 10, 3, 1, '#4d5245');
+  rect(ctx, 28, 12, 3, 2, '#575d4d');
+  rect(ctx, 23, 14, 4, 1, '#32372f');
+  pixel(ctx, 31, 2, '#575d4d');
+  pixel(ctx, 17, 12, '#575d4d');
+  pixel(ctx, 25, 8, '#262a22');
 
   // f2: cracked causeway slab
-  rect(ctx, 32, 0, 16, 6, '#5a6052');
-  rect(ctx, 32, 0, 16, 1, '#7d8470');
-  rect(ctx, 32, 1, 16, 1, '#6a7160');
-  rect(ctx, 32, 5, 16, 1, '#2e3329');
-  rect(ctx, 36, 1, 1, 4, '#2e3329');
-  rect(ctx, 44, 1, 1, 4, '#2e3329');
-  rect(ctx, 40, 2, 2, 3, '#4a5044');
-  rect(ctx, 32, 6, 16, 1, '#24281f');
+  rect(ctx, 32, 0, 16, 6, '#4a4f44');
+  rect(ctx, 32, 0, 16, 1, '#676d5c');
+  rect(ctx, 32, 1, 16, 1, '#575d4f');
+  rect(ctx, 32, 5, 16, 1, '#262a22');
+  rect(ctx, 36, 1, 1, 4, '#262a22');
+  rect(ctx, 44, 1, 1, 4, '#262a22');
+  rect(ctx, 40, 2, 2, 3, '#3d4239');
+  rect(ctx, 32, 6, 16, 1, '#1e211a');
 
   // f3: carved block
-  rect(ctx, 48, 0, 16, 16, '#565c4c');
-  rect(ctx, 48, 0, 16, 1, '#767d68');
-  rect(ctx, 48, 7, 16, 1, '#33382d');
-  rect(ctx, 55, 0, 1, 7, '#33382d');
-  rect(ctx, 51, 8, 1, 7, '#33382d');
-  rect(ctx, 48, 15, 16, 1, '#282c23');
-  rect(ctx, 50, 3, 4, 3, '#69705c');
+  rect(ctx, 48, 0, 16, 16, '#474c40');
+  rect(ctx, 48, 0, 16, 1, '#626856');
+  rect(ctx, 48, 7, 16, 1, '#2b2f26');
+  rect(ctx, 55, 0, 1, 7, '#2b2f26');
+  rect(ctx, 51, 8, 1, 7, '#2b2f26');
+  rect(ctx, 48, 15, 16, 1, '#22251e');
+  rect(ctx, 50, 3, 4, 3, '#575d4d');
 }
 
 function drawKingdomSky(ctx: Ctx, width: number, height: number): void {
+  // Near-black storm bands with a sickly green undertone.
   paintBands(ctx, width, height, [
-    [0, '#12101a'],
-    [50, '#1b1826'],
-    [102, '#272233'],
-    [152, '#373041'],
-    [196, '#4c4351'],
-    [230, '#6b6069'],
-    [250, '#8b7f7f'],
+    [0, '#04050a'],
+    [50, '#070910'],
+    [102, '#0b0f16'],
+    [152, '#10161d'],
+    [196, '#151d23'],
+    [230, '#1a242a'],
+    [250, '#1f2b30'],
   ]);
-  // Pale break in the storm clouds.
-  disc(ctx, 360, 128, 54, 'rgba(214,206,186,0.14)');
-  disc(ctx, 360, 128, 34, 'rgba(228,220,200,0.22)');
+  // A pale, watchful moon behind the clouds.
+  disc(ctx, 128, 62, 30, 'rgba(178,206,186,0.10)');
+  disc(ctx, 128, 62, 18, 'rgba(206,232,214,0.16)');
+  disc(ctx, 123, 58, 12, 'rgba(226,244,232,0.20)');
+  // Bruised cloud streaks.
+  for (let i = 0; i < 7; i++) {
+    const y = 34 + i * 30;
+    rect(ctx, (i * 71) % width, y, 120 + ((i * 37) % 90), 6, 'rgba(6,8,12,0.55)');
+  }
 }
 
 function drawKingdomFar(ctx: Ctx, width: number, height: number): void {
-  ridge(ctx, width, height, 40, '#221e2b', '#302b3b', 1.2, 2.1);
+  ridge(ctx, width, height, 40, '#090c11', '#10141b', 1.2, 2.1);
   // Distant broken spires.
   for (let i = 0; i < 14; i++) {
     const x = (i * 37 + 13) % width;
     const h = 34 + ((i * 19) % 44);
     const w = 7 + ((i * 5) % 7);
-    rect(ctx, x, height - h, w, h, '#221e2b');
-    rect(ctx, x, height - h, w, 2, '#302b3b');
+    rect(ctx, x, height - h, w, h, '#090c11');
+    rect(ctx, x, height - h, w, 2, '#141a22');
     // crenellated / broken tops
-    if (i % 2 === 0) rect(ctx, x, height - h - 5, 3, 5, '#221e2b');
-    else rect(ctx, x + w - 3, height - h - 4, 3, 4, '#221e2b');
+    if (i % 2 === 0) rect(ctx, x, height - h - 5, 3, 5, '#090c11');
+    else rect(ctx, x + w - 3, height - h - 4, 3, 4, '#090c11');
   }
 }
 
@@ -1234,17 +1451,17 @@ function drawKingdomMid(ctx: Ctx, width: number, height: number): void {
   const base = height;
   // A ruined battlement wall with gaps.
   const wallTop = base - 52;
-  rect(ctx, 0, wallTop, width, 52, '#1c1a26');
-  rect(ctx, 0, wallTop, width, 2, '#282536');
+  rect(ctx, 0, wallTop, width, 52, '#070a0f');
+  rect(ctx, 0, wallTop, width, 2, '#0e131a');
   for (let x = 0; x < width; x += 20) {
-    rect(ctx, x, wallTop - 9, 12, 9, '#1c1a26');
-    rect(ctx, x, wallTop - 9, 12, 2, '#282536');
+    rect(ctx, x, wallTop - 9, 12, 9, '#070a0f');
+    rect(ctx, x, wallTop - 9, 12, 2, '#0e131a');
   }
-  // Arrow slits + collapse.
-  for (let x = 12; x < width; x += 46) rect(ctx, x, wallTop + 14, 4, 14, '#12101a');
+  // Arrow slits + collapse
+  for (let x = 12; x < width; x += 46) rect(ctx, x, wallTop + 14, 4, 14, '#04060a');
   for (let x = 78; x < width; x += 160) {
-    rect(ctx, x, wallTop - 4, 30, 12, '#2a2637');
-    rect(ctx, x + 6, wallTop + 6, 22, 10, '#12101a');
+    rect(ctx, x, wallTop - 4, 30, 12, '#0d1119');
+    rect(ctx, x + 6, wallTop + 6, 22, 10, '#04060a');
   }
 }
 
@@ -1257,16 +1474,16 @@ function drawKingdomNear(ctx: Ctx, width: number, height: number): void {
     const w = 16 + ((i * 6) % 8);
     for (let y = base - h; y < base; y++) {
       const wobble = Math.round(Math.sin(y / 40 + i) * 2);
-      rect(ctx, cx - Math.floor(w / 2) + wobble, y, w, 1, '#161421');
-      rect(ctx, cx - Math.floor(w / 2) + wobble, y, 2, 1, '#221f30');
-      rect(ctx, cx + Math.floor(w / 2) - 2 + wobble, y, 2, 1, '#100e18');
+      rect(ctx, cx - Math.floor(w / 2) + wobble, y, w, 1, '#05070c');
+      rect(ctx, cx - Math.floor(w / 2) + wobble, y, 2, 1, '#0b0f16');
+      rect(ctx, cx + Math.floor(w / 2) - 2 + wobble, y, 2, 1, '#030407');
     }
     // jagged broken crown
     for (let k = 0; k < 4; k++) {
       const bh = 4 + ((k * 7 + i * 3) % 12);
-      rect(ctx, cx - Math.floor(w / 2) + k * 4, base - h - bh, 4, bh, '#161421');
+      rect(ctx, cx - Math.floor(w / 2) + k * 4, base - h - bh, 4, bh, '#05070c');
     }
-    if (i % 2 === 0) rect(ctx, cx - w, base - 12, w * 2, 5, '#161421');
+    if (i % 2 === 0) rect(ctx, cx - w, base - 12, w * 2, 5, '#05070c');
   }
 }
 
@@ -1277,26 +1494,68 @@ function drawKingdomColumns(ctx: Ctx, width: number, height: number): void {
     const w = 26;
     const h = 190 + ((i * 31) % 60);
     for (let y = base - h; y < base; y++) {
-      rect(ctx, cx - Math.floor(w / 2), y, w, 1, '#111019');
-      rect(ctx, cx - Math.floor(w / 2), y, 3, 1, '#1d1b29');
-      rect(ctx, cx + Math.floor(w / 2) - 3, y, 3, 1, '#0b0a11');
-      if (y % 22 === 3) rect(ctx, cx - 4, y, 8, 2, '#0b0a11');
+      rect(ctx, cx - Math.floor(w / 2), y, w, 1, '#04050a');
+      rect(ctx, cx - Math.floor(w / 2), y, 3, 1, '#090b12');
+      rect(ctx, cx + Math.floor(w / 2) - 3, y, 3, 1, '#020305');
+      if (y % 22 === 3) rect(ctx, cx - 4, y, 8, 2, '#020305');
     }
     // capital + fluting
-    rect(ctx, cx - Math.floor(w / 2) - 3, base - h, w + 6, 6, '#111019');
-    for (let k = 0; k < 3; k++) rect(ctx, cx - 8 + k * 8, base - h + 8, 2, h - 20, '#0b0a11');
+    rect(ctx, cx - Math.floor(w / 2) - 3, base - h, w + 6, 6, '#04050a');
+    for (let k = 0; k < 3; k++) rect(ctx, cx - 8 + k * 8, base - h + 8, 2, h - 20, '#020305');
   }
 }
 
 function drawKingdomMist(ctx: Ctx, width: number, _height: number): void {
-  for (let i = 0; i < 5; i++) {
-    const y = 118 + i * 30;
-    ctx.globalAlpha = 0.16 - i * 0.02;
+  // Dense, corpse-pale fog hugging the ruins.
+  for (let i = 0; i < 7; i++) {
+    const y = 96 + i * 26;
+    ctx.globalAlpha = 0.24 - i * 0.025;
     for (let x = 0; x < width; x++) {
-      rect(ctx, x, y + Math.round(Math.sin(x / 60 + i) * 5), 1, 10 + (i % 3) * 4, '#cfc3a3');
+      rect(ctx, x, y + Math.round(Math.sin(x / 52 + i * 1.7) * 6), 1, 12 + (i % 3) * 5, '#9fc4ad');
     }
   }
+  // Heavier ground fog.
+  ctx.globalAlpha = 0.3;
+  for (let x = 0; x < width; x++) {
+    rect(ctx, x, 236 + Math.round(Math.sin(x / 38) * 4), 1, 34, '#7fa894');
+  }
   ctx.globalAlpha = 1;
+}
+
+/**
+ * Pairs of faint, watching eyes scattered across the ruined skyline.
+ * Rendered as a parallax layer with a slow alpha pulse so they seem to
+ * blink in and out of the dark.
+ */
+function drawKingdomEyes(ctx: Ctx, width: number, height: number): void {
+  const pairs: Array<[number, number, string]> = [
+    [34, 96, '#f2b33d'], [96, 148, '#8fd6b4'], [164, 74, '#e05a4a'], [212, 132, '#f2b33d'],
+    [268, 88, '#8fd6b4'], [318, 156, '#e05a4a'], [372, 66, '#f2b33d'], [428, 122, '#8fd6b4'],
+    [58, 196, '#e05a4a'], [142, 214, '#f2b33d'], [246, 188, '#8fd6b4'], [352, 208, '#e05a4a'],
+    [446, 184, '#f2b33d'], [196, 44, '#8fd6b4'],
+  ];
+  for (const [x, y, color] of pairs) {
+    rect(ctx, x, y, 2, 2, color);
+    rect(ctx, x + 5, y, 2, 2, color);
+    // Heavy brows make the glow read as a face.
+    rect(ctx, x - 1, y - 1, 4, 1, '#04050a');
+    rect(ctx, x + 4, y - 1, 4, 1, '#04050a');
+    pixel(ctx, x, y, '#ffffff');
+    pixel(ctx, x + 5, y, '#ffffff');
+    // keep the layer inside the canvas bounds
+    if (x + 7 >= width || y + 2 >= height) continue;
+  }
+}
+
+/** Screen-fixed darkening frame with soft, banded edges. */
+function drawVignette(ctx: Ctx, width: number, height: number): void {
+  const gradient = ctx.createRadialGradient(width / 2, height / 2, height * 0.32, width / 2, height / 2, height * 0.95);
+  gradient.addColorStop(0, 'rgba(3,4,8,0)');
+  gradient.addColorStop(0.55, 'rgba(3,4,8,0.18)');
+  gradient.addColorStop(0.78, 'rgba(3,4,8,0.5)');
+  gradient.addColorStop(1, 'rgba(3,4,8,0.92)');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, width, height);
 }
 
 /* --- Themed props --------------------------------------------------- */
@@ -1519,10 +1778,27 @@ export function ensureTextures(scene: Phaser.Scene): void {
 
   /* --- Enemies --- */
   makeSheet(scene, 'slime', 20, 16, 3, (ctx, i) => drawSlime(ctx, i));
+  // Elite slime: nearest-neighbour upscale of the base sheet plus angry
+  // red eyes, so the bigger variant reads instantly as a tougher enemy.
+  makeScaledSheet(scene, 'slime', 'slime_big', 20, 16, 3, 1.5, (ctx, i) => {
+    // Coordinates are pre-scaled (×1.5) so the red eyes fully cover the
+    // cream eyes of the base sheet.
+    const eyeY = i === 1 ? 13 : 12;
+    rect(ctx, 8, eyeY - 1, 5, 1, PAL.ink);
+    rect(ctx, 17, eyeY - 1, 6, 1, PAL.ink);
+    rect(ctx, 9, eyeY, 3, 5, '#ff4a3c');
+    rect(ctx, 18, eyeY, 3, 5, '#ff4a3c');
+    rect(ctx, 10, eyeY + 1, 1, 2, '#fff2f0');
+    rect(ctx, 19, eyeY + 1, 1, 2, '#fff2f0');
+  });
+  makeSheet(scene, 'bat', 16, 12, 3, (ctx, i) => drawBat(ctx, i));
 
   /* --- Collectibles --- */
   makeSheet(scene, 'coin', 10, 10, 4, (ctx, i) => drawCoin(ctx, i));
   makeSheet(scene, 'crystal', 12, 16, 3, (ctx, i) => drawCrystal(ctx, i));
+  makeSheet(scene, 'power_heart', 14, 13, 2, (ctx, i) => drawHeartPower(ctx, i));
+  makeSheet(scene, 'power_shield', 14, 16, 2, (ctx, i) => drawShieldPower(ctx, i));
+  makeSheet(scene, 'power_boots', 14, 14, 2, (ctx, i) => drawBootsPower(ctx, i));
 
   /* --- Structures --- */
   makeSheet(scene, 'checkpoint', 16, 32, 2, (ctx, i) => drawCheckpoint(ctx, i === 1));
@@ -1546,6 +1822,8 @@ export function ensureTextures(scene: Phaser.Scene): void {
   makeImage(scene, 'ring', 16, 16, drawRing);
   makeImage(scene, 'glow', 32, 32, drawGlow);
   makeImage(scene, 'puff', 12, 9, drawPuff);
+  makeImage(scene, 'ice_crack', 16, 16, drawIceCrack);
+  makeImage(scene, 'ice_hole', 16, 16, drawIceHole);
   makeImage(scene, 'px_dot', 3, 3, (ctx) => rect(ctx, 0, 0, 3, 3, PAL.cream));
   makeImage(scene, 'px_small', 2, 2, (ctx) => rect(ctx, 0, 0, 2, 2, PAL.cream));
 
@@ -1598,6 +1876,8 @@ export function ensureTextures(scene: Phaser.Scene): void {
   makeImage(scene, 'bg_kg_near', 480, 270, (ctx) => drawKingdomNear(ctx, 480, 270));
   makeImage(scene, 'bg_kg_cols', 480, 270, (ctx) => drawKingdomColumns(ctx, 480, 270));
   makeImage(scene, 'bg_kg_mist', 480, 270, (ctx) => drawKingdomMist(ctx, 480, 270));
+  makeImage(scene, 'bg_kg_eyes', 480, 270, (ctx) => drawKingdomEyes(ctx, 480, 270));
+  makeImage(scene, 'vignette', 480, 270, (ctx) => drawVignette(ctx, 480, 270));
   makeImage(scene, 'ruin_pillar', 18, 40, drawRuinPillar);
   makeImage(scene, 'rubble', 16, 10, drawRubble);
 
@@ -1618,8 +1898,12 @@ export function ensureTextures(scene: Phaser.Scene): void {
   create({ key: 'player_hurt', frames: frames('player_hurt', 1), frameRate: 1 });
   create({ key: 'player_death', frames: frames('player_death', 6), frameRate: 9, repeat: 0 });
   create({ key: 'slime_move', frames: frames('slime', 3), frameRate: 5, repeat: -1 });
+  create({ key: 'bat_fly', frames: frames('bat', 3), frameRate: 9, repeat: -1 });
   create({ key: 'coin_spin', frames: frames('coin', 4), frameRate: 8, repeat: -1 });
   create({ key: 'crystal_shine', frames: frames('crystal', 3), frameRate: 4, repeat: -1 });
+  create({ key: 'heart_pulse', frames: frames('power_heart', 2), frameRate: 2, repeat: -1 });
+  create({ key: 'shield_pulse', frames: frames('power_shield', 2), frameRate: 2.5, repeat: -1 });
+  create({ key: 'boots_pulse', frames: frames('power_boots', 2), frameRate: 3, repeat: -1 });
   create({ key: 'checkpoint_glow', frames: frames('checkpoint', 2), frameRate: 2, repeat: -1 });
   create({ key: 'exit_portal', frames: frames('exit', 3), frameRate: 6, repeat: -1 });
 }

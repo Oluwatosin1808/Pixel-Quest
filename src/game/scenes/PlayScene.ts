@@ -4,8 +4,11 @@ import {
   GAME_WIDTH,
   GAME_HEIGHT,
   TILE,
+  ENEMY,
   PLAYER,
+  PICKUP,
   SCORE,
+  THIN_ICE,
 } from '../config/gameConfig';
 import { type LevelLayout } from '../config/levelData';
 import { getLevel, themeFor, type LevelDef, type ThemeDef } from '../config/levels';
@@ -13,6 +16,8 @@ import { createTileLayer, spawnDecorations } from '../utils/levelBuilder';
 import { ensureTextures } from '../utils/textures';
 import { Player, type PlayerControls } from '../entities/Player';
 import { Slime, type EnemyTarget } from '../entities/Slime';
+import { Bat } from '../entities/Bat';
+import { PowerUp, type PowerUpKind } from '../entities/PowerUp';
 import type { Enemy } from '../entities/Enemy';
 import { Coin } from '../entities/Coin';
 import { ScoreSystem } from '../systems/ScoreSystem';
@@ -45,6 +50,16 @@ interface ParallaxLayer {
   factor: number;
 }
 
+/** Runtime state of one collapsible ice tile (Frostfall Peaks). */
+interface ThinIceTile {
+  col: number;
+  row: number;
+  state: 'solid' | 'cracking' | 'gone';
+  /** ms the player has lingered on this tile. */
+  timer: number;
+  crack: Phaser.GameObjects.Image | null;
+}
+
 /**
  * The single gameplay scene. Everything world-specific — layout, tileset,
  * parallax backdrop, ambience and HUD labels — comes from the LevelDef that
@@ -56,9 +71,10 @@ export class PlayScene extends Phaser.Scene implements GameplaySceneLike {
   private layout!: LevelLayout;
   private layer!: Phaser.Tilemaps.TilemapLayer;
   private player!: Player;
-  private enemies: Slime[] = [];
+  private enemies: Enemy[] = [];
   private enemyGroup!: Phaser.Physics.Arcade.Group;
   private coins: Coin[] = [];
+  private powerUps: PowerUp[] = [];
   private scoreSys!: ScoreSystem;
   private crystalSprite: Phaser.GameObjects.Sprite | null = null;
   private crystalGlow: Phaser.GameObjects.Image | null = null;
@@ -68,6 +84,24 @@ export class PlayScene extends Phaser.Scene implements GameplaySceneLike {
   private levelInit: LevelInit = {};
   private activeCheckpointIndex = 0;
   private lastSafePoint = { x: 0, y: 0 };
+
+  /* ---------------- Sub-levels (parts) ---------------- */
+  private currentPart = 1;
+  /** World-x thresholds the player crosses to enter the next sub-level. */
+  private partBoundaries: number[] = [];
+
+  /* ---------------- Power-ups ---------------- */
+  private shieldUntil = -Infinity;
+  private shieldAura: Phaser.GameObjects.Image | null = null;
+  private lastShieldBlockAt = -Infinity;
+
+  /* ---------------- Thin ice ---------------- */
+  private iceTiles: ThinIceTile[] = [];
+
+  /* ---------------- Kingdom mood layers ---------------- */
+  private vignette: Phaser.GameObjects.Image | null = null;
+  private vignetteTween: Phaser.Tweens.Tween | null = null;
+  private blinkTweens: Phaser.Tweens.Tween[] = [];
 
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
   private prevTouch = { jump: false, attack: false };
@@ -97,11 +131,21 @@ export class PlayScene extends Phaser.Scene implements GameplaySceneLike {
     // Reset per-run state (scene instances are reused across restarts).
     this.enemies = [];
     this.coins = [];
+    this.powerUps = [];
+    this.iceTiles = [];
     this.checkpointSprites = [];
     this.parallax = [];
     this.ambient = [];
     this.overlayTween = null;
+    this.vignette = null;
+    this.vignetteTween = null;
+    this.blinkTweens = [];
     this.activeCheckpointIndex = 0;
+    this.currentPart = 1;
+    this.partBoundaries = [];
+    this.shieldUntil = -Infinity;
+    this.shieldAura = null;
+    this.lastShieldBlockAt = -Infinity;
     this.paused = false;
     this.won = false;
     this.gameOver = false;
@@ -124,6 +168,7 @@ export class PlayScene extends Phaser.Scene implements GameplaySceneLike {
     /* ---------------- Terrain ---------------- */
     this.layer = createTileLayer(this, layout);
     spawnDecorations(this, layout);
+    this.spawnThinIce(layout);
 
     const worldW = layout.cols * TILE;
     const worldH = layout.rows * TILE;
@@ -141,21 +186,48 @@ export class PlayScene extends Phaser.Scene implements GameplaySceneLike {
     this.player.onDied = () => this.handlePlayerDeath();
     this.player.onLanded = (fallSpeed) => this.spawnLandingDust(fallSpeed);
 
+    /* ---------------- Sub-level boundaries ---------------- */
+    this.partBoundaries = layout.checkpoints.map((cp) => cp.x + 40);
+    this.currentPart = Math.min(this.levelDef.parts.length, (this.levelInit.checkpoint ?? 0) + 1);
+
     /* ---------------- Enemies ---------------- */
     this.enemyGroup = this.physics.add.group();
     for (const spawn of layout.enemies) {
-      const slime = new Slime(this, spawn.x, spawn.y, { minX: spawn.minX, maxX: spawn.maxX });
-      if (spawn.tint !== undefined) slime.setBaseTint(spawn.tint);
-      slime.onKilled = (enemy) => this.handleEnemyKilled(enemy);
-      this.enemies.push(slime);
-      this.enemyGroup.add(slime);
-      this.physics.add.collider(slime, this.layer);
+      // Enemies grow tougher deeper into the level (part 1 is unchanged).
+      const part = this.partForX(spawn.x);
+      const bonus = part - 1;
+      const chase = ENEMY.chaseSpeed + ENEMY.perPartChase * bonus;
+      const aggro = ENEMY.aggroRange + ENEMY.perPartAggro * bonus;
+      const enemy: Enemy =
+        spawn.type === 'bat'
+          ? new Bat(this, spawn.x, spawn.y, {
+              minX: spawn.minX,
+              maxX: spawn.maxX,
+              maxHealth: part >= 3 ? 2 : 1,
+              aggroRange: aggro + 24,
+              chaseSpeed: chase,
+              ...(spawn.tint === undefined ? {} : { baseTint: spawn.tint }),
+            })
+          : new Slime(this, spawn.x, spawn.y, {
+              minX: spawn.minX,
+              maxX: spawn.maxX,
+              big: spawn.big === true,
+              maxHealth: (spawn.big === true ? 5 : 2) + ENEMY.perPartHp * bonus,
+              aggroRange: aggro,
+              // Elites plod along slowly but gain the same part bonus.
+              chaseSpeed: (spawn.big === true ? 66 : ENEMY.chaseSpeed) + ENEMY.perPartChase * bonus,
+              ...(spawn.tint === undefined ? {} : { baseTint: spawn.tint }),
+            });
+      enemy.onKilled = (e) => this.handleEnemyKilled(e);
+      this.enemies.push(enemy);
+      this.enemyGroup.add(enemy);
+      this.physics.add.collider(enemy, this.layer);
     }
     this.physics.add.overlap(this.player, this.enemyGroup, (_playerObj, enemyObj) => {
-      const enemy = enemyObj as Slime;
+      const enemy = enemyObj as Enemy;
       if (!enemy.active || enemy.isDead || this.player.dead || this.won) return;
       const now = this.time.now;
-      if (enemy.contactDamage() > 0 && this.player.takeDamage(enemy.x, now)) {
+      if (enemy.contactDamage() > 0 && this.applyDamage(enemy.x, now)) {
         this.onPlayerHurt();
       }
     });
@@ -163,6 +235,9 @@ export class PlayScene extends Phaser.Scene implements GameplaySceneLike {
     /* ---------------- Collectibles ---------------- */
     for (const coin of layout.coins) {
       this.coins.push(Coin.spawn(this, coin.x, coin.y));
+    }
+    for (const pickup of layout.pickups) {
+      this.powerUps.push(PowerUp.spawn(this, pickup.x, pickup.y, pickup.type));
     }
     this.spawnCrystal(layout);
 
@@ -266,6 +341,20 @@ export class PlayScene extends Phaser.Scene implements GameplaySceneLike {
       const sprite = this.add.tileSprite(cx, cy, GAME_WIDTH, GAME_HEIGHT, def.key).setDepth(def.depth);
       sprite.setScrollFactor(0);
       this.parallax.push({ sprite, factor: def.factor });
+      if (def.blink) {
+        // The kingdom's watching eyes fade in and out of the dark.
+        this.blinkTweens.push(
+          this.tweens.add({
+            targets: sprite,
+            alpha: { from: 1, to: 0.08 },
+            duration: 760 + (Math.abs(def.depth) % 5) * 140,
+            delay: 500 + (Math.abs(def.depth) % 7) * 320,
+            yoyo: true,
+            repeat: -1,
+            ease: 'Sine.easeInOut',
+          }),
+        );
+      }
     }
 
     const overlay = theme.overlay;
@@ -291,6 +380,26 @@ export class PlayScene extends Phaser.Scene implements GameplaySceneLike {
           targets: image,
           x: { from: cx - range, to: cx + range },
           duration: 5200,
+          yoyo: true,
+          repeat: -1,
+          ease: 'Sine.easeInOut',
+        });
+      }
+    }
+
+    const vignette = theme.vignette;
+    if (vignette) {
+      // Screen-fixed darkening frame that closes the world in around you.
+      this.vignette = this.add
+        .image(cx, cy, vignette.key)
+        .setScrollFactor(0)
+        .setDepth(8500)
+        .setAlpha(vignette.alpha);
+      if (vignette.pulse) {
+        this.vignetteTween = this.tweens.add({
+          targets: this.vignette,
+          alpha: { from: vignette.alpha, to: vignette.alpha * 0.7 },
+          duration: 2600,
           yoyo: true,
           repeat: -1,
           ease: 'Sine.easeInOut',
@@ -486,6 +595,49 @@ export class PlayScene extends Phaser.Scene implements GameplaySceneLike {
       return;
     }
 
+    if (kind === 'wisp') {
+      // Pale grave-lights wandering low through the ruins.
+      for (let x = 220; x < worldW; x += 320) {
+        this.ambient.push(
+          this.add
+            .particles(x, worldH - 70, 'px_dot', {
+              x: { min: -150, max: 150 },
+              y: { min: -110, max: 30 },
+              lifespan: { min: 5000, max: 9500 },
+              speed: { min: 4, max: 13 },
+              angle: { min: 230, max: 310 },
+              alpha: { start: 0.9, end: 0 },
+              scale: { start: 1.9, end: 0.5 },
+              tint: [0x8fd6b4, 0xb9e8d2, 0x9fb8c9],
+              blendMode: 'ADD',
+              quantity: 1,
+              frequency: 1400,
+            })
+            .setDepth(64),
+        );
+      }
+      // Cold ash drifting between the tombs.
+      for (let x = 260; x < worldW; x += 540) {
+        this.ambient.push(
+          this.add
+            .particles(x, worldH / 2, 'px_small', {
+              x: { min: -240, max: 240 },
+              y: { min: -130, max: 130 },
+              lifespan: { min: 4600, max: 8800 },
+              speed: { min: 2, max: 7 },
+              angle: { min: 195, max: 345 },
+              alpha: { start: 0.28, end: 0 },
+              scale: { start: 1.1, end: 0.45 },
+              tint: [0x6f7f88, 0x56615c],
+              quantity: 1,
+              frequency: 820,
+            })
+            .setDepth(60),
+        );
+      }
+      return;
+    }
+
     // 'dust' — slow ash and motes drifting through the ruins.
     for (let x = 240; x < worldW; x += 500) {
       this.ambient.push(
@@ -529,7 +681,7 @@ export class PlayScene extends Phaser.Scene implements GameplaySceneLike {
   /* Per-frame update                                                  */
   /* ================================================================ */
 
-  override update(time: number, _delta: number): void {
+  override update(time: number, delta: number): void {
     // Parallax follows the camera even while paused (cheap and keeps depth alive).
     const cam = this.cameras.main;
     for (const layer of this.parallax) {
@@ -563,6 +715,9 @@ export class PlayScene extends Phaser.Scene implements GameplaySceneLike {
       this.resolvePit();
       this.updateLastSafe();
       this.trackAttackFx();
+      this.updateThinIce(delta);
+      this.updateShieldAura();
+      this.checkPartAdvance();
     } else {
       this.updateEnemies(time);
     }
@@ -619,7 +774,9 @@ export class PlayScene extends Phaser.Scene implements GameplaySceneLike {
       if (!Phaser.Geom.Rectangle.Overlaps(hitbox, enemy.getBounds())) continue;
       if (!this.player.registerAttackHit(enemy, time)) continue;
 
-      const killed = enemy.hurt(1, this.player.x, time);
+      const connected = enemy.hurt(1, this.player.x, time);
+      if (!connected) continue;
+      const killed = enemy.isDead;
       if (killed) {
         this.hitSpark(enemy.x, enemy.y);
         this.cameras.main.shake(110, 0.004);
@@ -627,7 +784,7 @@ export class PlayScene extends Phaser.Scene implements GameplaySceneLike {
         this.hitSpark(enemy.x, enemy.y - 4);
       }
       AudioManager.get().playSfx('hit');
-      this.floatText(enemy.x, enemy.y - 14, killed ? `+${SCORE.enemy}` : 'HIT', killed ? '#f4c430' : '#f2e6c9');
+      this.floatText(enemy.x, enemy.y - 14, killed ? `+${enemy.scoreValue}` : 'HIT', killed ? '#f4c430' : '#f2e6c9');
     }
   }
 
@@ -674,15 +831,24 @@ export class PlayScene extends Phaser.Scene implements GameplaySceneLike {
         this.collectCrystal(crystal);
       }
     }
+
+    for (const power of this.powerUps) {
+      if (!power.active || power.collected) continue;
+      if (Phaser.Math.Distance.Between(px, py, power.x, power.y) > PICKUP.radius) continue;
+      if (!power.collect()) continue;
+      this.applyPowerUp(power.kind, power.x, power.y);
+    }
   }
 
   private resolvePit(): void {
     if (this.player.y <= this.layout.pitY) return;
     const now = this.time.now;
-    const died = this.player.takeDamage(null, now);
+    const shielded = now < this.shieldUntil;
+    const died = this.applyDamage(null, now);
     // Rescue at the last grounded position — for a fatal fall the death
     // animation plays there instead, so no infinite-fall loop is possible.
     this.player.reposition(this.lastSafePoint.x, this.lastSafePoint.y);
+    if (shielded) return; // the shield already showed its own feedback
     if (!died) {
       this.player.health.grantInvulnerability(now, PLAYER.respawnInvulnMs);
       this.cameras.main.flash(160, 20, 30, 25);
@@ -697,7 +863,232 @@ export class PlayScene extends Phaser.Scene implements GameplaySceneLike {
     // Only record positions that actually rest on solid ground.
     const tile = this.layer.getTileAtWorldXY(this.player.x, this.player.y + 14);
     if (!tile) return;
+    // Never record thin ice: falling through would rescue you into the hole.
+    if (this.isThinIceTile(tile.x, tile.y)) return;
     this.lastSafePoint = { x: this.player.x, y: this.player.y - 4 };
+  }
+
+  /* ================================================================ */
+  /* Damage (shield-aware)                                             */
+  /* ================================================================ */
+
+  /**
+   * Route all player damage through the shield check. Returns true when
+   * real damage landed (callers then run their hurt feedback).
+   */
+  private applyDamage(fromX: number | null, now: number): boolean {
+    if (now < this.shieldUntil) {
+      if (now - this.lastShieldBlockAt > 380) {
+        this.lastShieldBlockAt = now;
+        AudioManager.get().playSfx('hit');
+        this.hitSpark(this.player.x, this.player.y - 6);
+        this.floatText(this.player.x, this.player.y - 16, 'BLOCKED', '#9ad3c7');
+      }
+      return false;
+    }
+    return this.player.takeDamage(fromX, now);
+  }
+
+  /* ================================================================ */
+  /* Power-ups                                                         */
+  /* ================================================================ */
+
+  private applyPowerUp(kind: PowerUpKind, x: number, y: number): void {
+    const now = this.time.now;
+    const tint = kind === 'heart' ? 0xef6a55 : kind === 'shield' ? 0x9ad3c7 : 0xf4c430;
+
+    if (kind === 'heart') {
+      const healed = this.player.heal(1);
+      if (healed > 0) {
+        AudioManager.get().playSfx('heal');
+        this.floatText(x, y - 6, 'HP +1', '#ef6a55');
+      } else {
+        this.scoreSys.addBonus(SCORE.heartFull);
+        this.floatText(x, y - 6, `+${SCORE.heartFull}`, '#f4c430');
+      }
+    } else if (kind === 'shield') {
+      this.shieldUntil = now + PICKUP.shieldMs;
+      this.ensureShieldAura();
+      AudioManager.get().playSfx('powerup');
+      showToast('SHIELD UP', 'teal');
+      this.floatText(x, y - 6, 'SHIELD', '#9ad3c7');
+    } else {
+      this.player.applySpeedBoost(PICKUP.bootsMs);
+      AudioManager.get().playSfx('powerup');
+      showToast('SPEED UP', 'gold');
+      this.floatText(x, y - 6, 'SPEED UP', '#f4c430');
+    }
+
+    this.syncHud();
+    this.checkpointBurst(x, y, tint);
+  }
+
+  private ensureShieldAura(): void {
+    if (this.shieldAura) return;
+    const aura = this.add
+      .image(this.player.x, this.player.y - 1, 'ring')
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setTint(0x9ad3c7)
+      .setDepth(this.player.y - 1)
+      .setScale(1.5);
+    this.tweens.add({
+      targets: aura,
+      scale: { from: 1.35, to: 1.8 },
+      alpha: { from: 0.9, to: 0.55 },
+      duration: 620,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    });
+    this.shieldAura = aura;
+  }
+
+  private updateShieldAura(): void {
+    const active = this.time.now < this.shieldUntil;
+    const aura = this.shieldAura;
+    if (!active) {
+      if (aura) {
+        this.tweens.killTweensOf(aura);
+        aura.destroy();
+        this.shieldAura = null;
+      }
+      return;
+    }
+    if (!aura) return;
+    aura.setPosition(this.player.x, this.player.y - 1);
+    aura.setDepth(this.player.y - 1);
+  }
+
+  /* ================================================================ */
+  /* Sub-levels (parts)                                               */
+  /* ================================================================ */
+
+  /** Which sub-level a world-x position belongs to (1-based). */
+  private partForX(x: number): number {
+    let part = 1;
+    for (const boundary of this.partBoundaries) {
+      if (x > boundary) part += 1;
+    }
+    return Math.min(part, this.levelDef.parts.length);
+  }
+
+  /** Crossed into a new sub-level? Announce it and pay the bonus. */
+  private checkPartAdvance(): void {
+    const part = this.partForX(this.player.x);
+    if (part <= this.currentPart) return;
+    this.currentPart = part;
+
+    const name = this.levelDef.parts[part - 1] ?? '';
+    this.scoreSys.addBonus(SCORE.partClear);
+    this.syncHud();
+    AudioManager.get().playSfx('powerup');
+    this.banner(this.player.x, this.player.y - 40, `PART ${part}`, '#9ad3c7');
+    this.floatText(this.player.x, this.player.y - 54, `+${SCORE.partClear}`, '#f4c430');
+    this.checkpointBurst(this.player.x, this.player.y, this.theme.accent);
+    // Let any checkpoint toast finish before announcing the sub-level.
+    this.time.delayedCall(1200, () => showToast(`PART ${part} · ${name}`, 'teal'));
+  }
+
+  /* ================================================================ */
+  /* Thin ice (Frostfall Peaks)                                        */
+  /* ================================================================ */
+
+  /** Lay the collapsible sheets: bridge gaps and mark ridge patches. */
+  private spawnThinIce(layout: LevelLayout): void {
+    for (const span of layout.thinIce) {
+      for (let col = span.c0; col <= span.c1; col++) {
+        // Gap spans get a real ice sheet to walk on; ridge patches already
+        // have terrain (they collapse to reveal the drop below).
+        const existing = this.layer.getTileAt(col, span.row);
+        if (!existing || existing.index === -1) {
+          this.layer.putTileAt(0, col, span.row);
+        }
+        const crack = this.add
+          .image(col * TILE + TILE / 2, span.row * TILE + TILE / 2, 'ice_crack')
+          .setDepth(1)
+          .setAlpha(0.26);
+        this.iceTiles.push({ col, row: span.row, state: 'solid', timer: 0, crack });
+      }
+    }
+  }
+
+  /**
+   * Per-frame ice logic: standing still (or crawling) on a sheet makes it
+   * groan, then collapse. Moving at full run speed keeps it intact.
+   */
+  private updateThinIce(delta: number): void {
+    if (this.iceTiles.length === 0) return;
+    const body = this.player.body as Phaser.Physics.Arcade.Body;
+    const feet = body.bottom;
+    const px = this.player.x;
+    const movingFast = Math.abs(body.velocity.x) >= THIN_ICE.safeSpeed;
+
+    for (const ice of this.iceTiles) {
+      if (ice.state === 'gone') continue;
+
+      const x0 = ice.col * TILE;
+      const top = ice.row * TILE;
+      const standing = px >= x0 - 3 && px <= x0 + TILE + 3 && Math.abs(feet - top) <= 4;
+
+      if (!standing || movingFast) {
+        ice.timer = Math.max(0, ice.timer - delta * 1.8);
+        continue;
+      }
+
+      ice.timer += delta;
+      if (ice.state === 'solid' && ice.timer >= THIN_ICE.warnMs) {
+        ice.state = 'cracking';
+        AudioManager.get().playSfx('crack');
+        if (ice.crack) {
+          ice.crack.setAlpha(0.95);
+          this.tweens.add({
+            targets: ice.crack,
+            scale: { from: 1, to: 1.2 },
+            alpha: { from: 0.95, to: 0.55 },
+            duration: 240,
+            yoyo: true,
+            repeat: -1,
+            ease: 'Sine.easeInOut',
+          });
+        }
+      }
+      if (ice.timer >= THIN_ICE.collapseMs) this.collapseIce(ice);
+    }
+  }
+
+  private collapseIce(ice: ThinIceTile): void {
+    ice.state = 'gone';
+    ice.timer = 0;
+    this.layer.putTileAt(-1, ice.col, ice.row);
+
+    const cx = ice.col * TILE + TILE / 2;
+    const cy = ice.row * TILE + TILE / 2;
+    if (ice.crack) {
+      this.tweens.killTweensOf(ice.crack);
+      ice.crack.destroy();
+      ice.crack = null;
+    }
+    this.add.image(cx, cy, 'ice_hole').setDepth(1);
+
+    AudioManager.get().playSfx('shatter');
+    this.burst(cx, cy, 'px_small', {
+      speed: { min: 50, max: 130 },
+      angle: { min: 200, max: 340 },
+      lifespan: 520,
+      gravityY: 420,
+      scale: { start: 1.6, end: 0.6 },
+      alpha: { start: 1, end: 0 },
+      tint: [0xe8f6fb, 0x9fd6e8, 0xffffff],
+      quantity: 10,
+    });
+    this.cameras.main.shake(130, 0.003);
+  }
+
+  private isThinIceTile(col: number, row: number): boolean {
+    for (const ice of this.iceTiles) {
+      if (ice.col === col && ice.row === row) return true;
+    }
+    return false;
   }
 
   /* ================================================================ */
@@ -718,15 +1109,33 @@ export class PlayScene extends Phaser.Scene implements GameplaySceneLike {
   }
 
   private handleEnemyKilled(enemy: Enemy): void {
-    this.scoreSys.addEnemyKill();
+    this.scoreSys.addEnemyKill(enemy.scoreValue);
     this.syncHud();
     this.enemyBurst(enemy.x, enemy.y);
+    this.maybeDropLoot(enemy);
+  }
+
+  /** Slain enemies may drop a heart (while hurt) or a coin. */
+  private maybeDropLoot(enemy: Enemy): void {
+    const hurt = this.player.health.health < PLAYER.maxHealth;
+    if (hurt && Math.random() < PICKUP.dropHeartChance) {
+      this.powerUps.push(PowerUp.spawn(this, enemy.x, enemy.y - 6, 'heart'));
+      return;
+    }
+    if (!hurt && Math.random() < PICKUP.dropCoinChance) {
+      this.coins.push(Coin.spawn(this, enemy.x, enemy.y - 8));
+    }
   }
 
   private handlePlayerDeath(): void {
     if (this.gameOver || this.won) return;
     this.gameOver = true;
     resetTouch();
+    if (this.shieldAura) {
+      this.tweens.killTweensOf(this.shieldAura);
+      this.shieldAura.destroy();
+      this.shieldAura = null;
+    }
     this.physics.pause();
     SaveSystem.submitScore(this.scoreSys.score);
     hydrateFromSave(SaveSystem.load());
@@ -994,6 +1403,8 @@ export class PlayScene extends Phaser.Scene implements GameplaySceneLike {
       ...(this.scoreSys ? this.scoreSys.snapshot() : {}),
       worldName: this.levelDef.worldName,
       levelName: this.levelDef.levelName,
+      part: this.currentPart,
+      parts: this.levelDef.parts.length,
     });
   }
 
@@ -1007,6 +1418,8 @@ export class PlayScene extends Phaser.Scene implements GameplaySceneLike {
     this.anims.pauseAll();
     for (const emitter of this.ambient) emitter.emitting = false;
     this.overlayTween?.pause();
+    this.vignetteTween?.pause();
+    for (const tween of this.blinkTweens) tween.pause();
     setPhase('paused');
   }
 
@@ -1017,6 +1430,8 @@ export class PlayScene extends Phaser.Scene implements GameplaySceneLike {
     this.anims.resumeAll();
     for (const emitter of this.ambient) emitter.emitting = true;
     this.overlayTween?.resume();
+    this.vignetteTween?.resume();
+    for (const tween of this.blinkTweens) tween.resume();
     setPhase('playing');
   }
 
@@ -1027,6 +1442,8 @@ export class PlayScene extends Phaser.Scene implements GameplaySceneLike {
     this.anims.resumeAll();
     for (const emitter of this.ambient) emitter.emitting = true;
     this.overlayTween?.resume();
+    this.vignetteTween?.resume();
+    for (const tween of this.blinkTweens) tween.resume();
     resetTouch();
 
     const save = SaveSystem.load();

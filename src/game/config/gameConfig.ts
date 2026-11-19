@@ -35,23 +35,54 @@ export const PLAYER = {
 
 /** Enemy tuning. */
 export const ENEMY = {
-  patrolSpeed: 34,
-  chaseSpeed: 66,
-  aggroRange: 110,
+  patrolSpeed: 38,
+  chaseSpeed: 74,
+  aggroRange: 118,
   aggroYRange: 44,
+  /** How far past its patrol strip an enemy may chase (anti-camp leash). */
+  leash: 56,
   contactDamage: 1,
   hurtKnockbackX: 140,
   hurtKnockbackY: -160,
   hurtStunMs: 220,
   flashMs: 90,
+  /** Stat gains applied per sub-level (part 1 gets none). */
+  perPartHp: 1,
+  perPartChase: 8,
+  perPartAggro: 26,
 } as const;
 
 /** Scoring rules. */
 export const SCORE = {
   coin: 10,
   enemy: 25,
+  eliteEnemy: 60,
+  batEnemy: 30,
   crystal: 100,
   levelClear: 500,
+  partClear: 150,
+  heartFull: 25,
+} as const;
+
+/** Pickup tuning (power-ups + health drops). */
+export const PICKUP = {
+  radius: 15,
+  shieldMs: 9000,
+  bootsMs: 9000,
+  /** Chance a slain enemy drops a health heart when the player is hurt. */
+  dropHeartChance: 0.2,
+  /** Chance a slain enemy drops a coin instead. */
+  dropCoinChance: 0.12,
+} as const;
+
+/** Thin-ice (Frostfall Peaks) tuning. */
+export const THIN_ICE = {
+  /** Walking speed (px/s) considered "fast enough" to stay safe. */
+  safeSpeed: 72,
+  /** Standing / crawling this long makes the ice groan. */
+  warnMs: 620,
+  /** Standing / crawling this long collapses the ice. */
+  collapseMs: 1450,
 } as const;
 
 export const SCENE_KEYS = {

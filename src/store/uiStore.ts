@@ -12,6 +12,8 @@ const initialHud: HudState = {
   crystalsTotal: 1,
   worldName: 'WORLD 1',
   levelName: 'WHISPERING WOODS',
+  part: 1,
+  parts: 3,
 };
 
 let state: UIState = {

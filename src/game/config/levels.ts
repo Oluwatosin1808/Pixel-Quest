@@ -10,13 +10,15 @@ import {
 export type ThemeId = 'forest' | 'cavern' | 'peaks' | 'kingdom';
 
 /** Ambient particle preset used by the gameplay scene. */
-export type AmbientId = 'forest' | 'embers' | 'snow' | 'dust';
+export type AmbientId = 'forest' | 'embers' | 'snow' | 'dust' | 'wisp';
 
 /** One screen-fixed parallax background layer. */
 export interface ParallaxLayerDef {
   key: string;
   depth: number;
   factor: number;
+  /** Subtle alpha flicker (used by the kingdom's watching eyes). */
+  blink?: boolean;
 }
 
 /** Everything the scene needs to paint a world. */
@@ -25,6 +27,8 @@ export interface ThemeDef {
   layers: ParallaxLayerDef[];
   /** Optional additive overlay painted above the sky (glow / beams). */
   overlay?: { key: string; depth: number; alpha: number; pulse?: boolean; drift?: number };
+  /** Screen-fixed darkening frame painted above the world. */
+  vignette?: { key: string; alpha: number; pulse?: boolean };
   ambient: AmbientId;
   /** Tint used by the checkpoint burst + crystal flash. */
   accent: number;
@@ -40,6 +44,8 @@ export interface LevelDef {
   theme: ThemeId;
   /** Short control hint shown on the signpost near the spawn. */
   hint: string;
+  /** Display names of the level's sub-levels (parts), in order. */
+  parts: string[];
   build: () => LevelLayout;
 }
 
@@ -85,12 +91,14 @@ const THEMES: Record<ThemeId, ThemeDef> = {
     layers: [
       { key: 'bg_kg_far', depth: -94, factor: 0.1 },
       { key: 'bg_kg_mid', depth: -88, factor: 0.22 },
+      { key: 'bg_kg_eyes', depth: -82, factor: 0.28, blink: true },
       { key: 'bg_kg_near', depth: -76, factor: 0.36 },
       { key: 'bg_kg_cols', depth: -70, factor: 0.46 },
     ],
-    overlay: { key: 'bg_kg_mist', depth: -64, alpha: 0.4, drift: 4 },
-    ambient: 'dust',
-    accent: 0xc9b06a,
+    overlay: { key: 'bg_kg_mist', depth: -64, alpha: 0.62, drift: 4 },
+    vignette: { key: 'vignette', alpha: 0.6, pulse: true },
+    ambient: 'wisp',
+    accent: 0x8fd6b4,
   },
 };
 
@@ -104,6 +112,7 @@ export const LEVELS: LevelDef[] = [
     subtitle: 'Mist, moss and creeping slimes',
     theme: 'forest',
     hint: 'A/D MOVE\nSPACE JUMP\nJ SWORD',
+    parts: ['MEADOW PATH', 'THE OLD BRIDGE', 'DEEPWOOD SHADE'],
     build: buildWhisperingWoods,
   },
   {
@@ -114,6 +123,7 @@ export const LEVELS: LevelDef[] = [
     subtitle: 'Molten rock and sleeping stone',
     theme: 'cavern',
     hint: 'MIND THE\nGLOWING GAP',
+    parts: ['EMBERS WAKE', 'THE LAVA LAKE', 'SUNKEN FORGE'],
     build: buildEmberCaverns,
   },
   {
@@ -124,6 +134,7 @@ export const LEVELS: LevelDef[] = [
     subtitle: 'Thin air and sharper teeth',
     theme: 'peaks',
     hint: 'ICE HOLDS\nMOSTLY',
+    parts: ['FIRST LIGHT', 'WINDWARD RIDGE', 'SUMMIT STORM'],
     build: buildFrostfallPeaks,
   },
   {
@@ -134,6 +145,7 @@ export const LEVELS: LevelDef[] = [
     subtitle: 'Ruins that remember your name',
     theme: 'kingdom',
     hint: 'THE RUINS\nREMEMBER',
+    parts: ['BROKEN GATE', 'HALL OF KINGS', 'THE LAST COURT'],
     build: buildForgottenKingdom,
   },
 ];

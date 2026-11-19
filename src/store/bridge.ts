@@ -102,6 +102,8 @@ function hudForLevel(levelId: string) {
     crystalsTotal: 1,
     worldName: level.worldName,
     levelName: level.levelName,
+    part: 1,
+    parts: level.parts.length,
   };
 }
 

@@ -19,13 +19,28 @@ export interface SpawnPoint {
 }
 
 export interface EnemySpawn {
-  type: 'slime';
+  type: 'slime' | 'bat';
   x: number;
   y: number;
   minX: number;
   maxX: number;
   /** Optional colour shift so each world's slimes match the scenery. */
   tint?: number;
+  /** Elite variant: bigger, tougher, worth more score. */
+  big?: boolean;
+}
+
+export interface PickupSpawn {
+  type: 'heart' | 'shield' | 'boots';
+  x: number;
+  y: number;
+}
+
+/** A span of collapsible ice (Frostfall Peaks only). */
+export interface ThinIceSpawn {
+  c0: number;
+  c1: number;
+  row: number;
 }
 
 export interface CheckpointSpawn {
@@ -50,6 +65,8 @@ export interface LevelLayout {
   playerStart: SpawnPoint;
   coins: SpawnPoint[];
   enemies: EnemySpawn[];
+  pickups: PickupSpawn[];
+  thinIce: ThinIceSpawn[];
   crystal: { id: string; x: number; y: number } | null;
   checkpoints: CheckpointSpawn[];
   exit: SpawnPoint;
@@ -232,10 +249,27 @@ export function buildWhisperingWoods(): LevelLayout {
   const enemies: EnemySpawn[] = [
     slime(18, 30), // patrolling the start meadow
     slime(46, 56), // right after gap A
+    slime(66, 74), // holding the ground before the bridge
     slime(82, 97, 16), // on the wooden bridge
+    slime(118, 128), // stalking the meadow before the crystal ledge
     slime(147, 157), // guarding the stretch after the crystal
+    { type: 'slime', big: true, x: tx(165), y: SURFACE_ROW * TILE - 8, minX: 160 * TILE + 6, maxX: 171 * TILE - 6 },
     slime(194, 202), // between hill and plateau
     slime(224, 232), // guarding the exit
+    { type: 'bat', x: tx(90), y: SURFACE_ROW * TILE - 74, minX: 84 * TILE, maxX: 97 * TILE },
+    { type: 'bat', x: tx(224), y: SURFACE_ROW * TILE - 82, minX: 217 * TILE, maxX: 231 * TILE },
+  ];
+
+  /* ---------------- Pickups ---------------- */
+
+  const pickups: PickupSpawn[] = [
+    { type: 'heart', x: tx(47), y: ty(16) },
+    { type: 'boots', x: tx(68), y: ty(16) },
+    { type: 'shield', x: tx(100), y: ty(15) },
+    { type: 'boots', x: tx(150), y: ty(16) },
+    { type: 'heart', x: tx(194), y: ty(14) },
+    { type: 'shield', x: tx(207), y: ty(13) },
+    { type: 'heart', x: tx(226), y: ty(16) },
   ];
 
   /* ---------------- Crystal ---------------- */
@@ -325,6 +359,8 @@ export function buildWhisperingWoods(): LevelLayout {
     playerStart: { x: tx(4), y: SURFACE_ROW * TILE - 12 },
     coins,
     enemies,
+    pickups,
+    thinIce: [],
     crystal,
     checkpoints,
     exit,
@@ -386,6 +422,7 @@ interface Draft {
   surface: number;
   coins: SpawnPoint[];
   enemies: EnemySpawn[];
+  pickups: PickupSpawn[];
   decorations: DecorationSpawn[];
 }
 
@@ -405,7 +442,7 @@ function draftTools(d: Draft) {
     if (y === null) return;
     d.decorations.push({ key, x: tx(col), y: y + dy });
   };
-  const slime = (c0: number, c1: number, surface = d.surface, tint?: number): void => {
+  const slime = (c0: number, c1: number, surface = d.surface, tint?: number, big = false): void => {
     d.enemies.push({
       type: 'slime',
       x: tx(Math.round((c0 + c1) / 2)),
@@ -413,9 +450,25 @@ function draftTools(d: Draft) {
       minX: c0 * TILE + 6,
       maxX: (c1 + 1) * TILE - 6,
       ...(tint === undefined ? {} : { tint }),
+      ...(big ? { big: true } : {}),
     });
   };
-  return { fill, ground, coin, coinArc, surfaceY, prop, slime };
+  /** Flying enemy hovering `height` px above the surface row. */
+  const bat = (c0: number, c1: number, height = 76, surface = d.surface, tint?: number): void => {
+    d.enemies.push({
+      type: 'bat',
+      x: tx(Math.round((c0 + c1) / 2)),
+      y: surface * TILE - height,
+      minX: c0 * TILE,
+      maxX: (c1 + 1) * TILE,
+      ...(tint === undefined ? {} : { tint }),
+    });
+  };
+  /** Power-up / health pickup resting on the surface row. */
+  const pickup = (type: PickupSpawn['type'], col: number, dy = 24): void => {
+    d.pickups.push({ type, x: tx(col), y: d.surface * TILE - dy });
+  };
+  return { fill, ground, coin, coinArc, surfaceY, prop, slime, bat, pickup };
 }
 
 function finishDraft(d: Draft, extra: Partial<LevelLayout>): LevelLayout {
@@ -427,6 +480,8 @@ function finishDraft(d: Draft, extra: Partial<LevelLayout>): LevelLayout {
     playerStart: { x: tx(4), y: d.surface * TILE - 12 },
     coins: d.coins,
     enemies: d.enemies,
+    pickups: d.pickups,
+    thinIce: [],
     crystal: null,
     checkpoints: [],
     exit: { x: (d.cols - 8) * TILE, y: d.surface * TILE - 32 },
@@ -437,7 +492,7 @@ function finishDraft(d: Draft, extra: Partial<LevelLayout>): LevelLayout {
 }
 
 function makeDraft(cols: number, rows: number, surface: number): Draft {
-  return { grid: newGrid(cols, rows), cols, rows, surface, coins: [], enemies: [], decorations: [] };
+  return { grid: newGrid(cols, rows), cols, rows, surface, coins: [], enemies: [], pickups: [], decorations: [] };
 }
 
 /* ================================================================== */
@@ -450,7 +505,7 @@ export function buildEmberCaverns(): LevelLayout {
   const surface = 18;
   const d = makeDraft(cols, rows, surface);
   const t = draftTools(d);
-  const { fill, ground, coin, coinArc, prop, slime } = t;
+  const { fill, ground, coin, coinArc, prop, slime, bat, pickup } = t;
 
   /* ---------------- Terrain ---------------- */
 
@@ -530,10 +585,25 @@ export function buildEmberCaverns(): LevelLayout {
   const emberTint = 0xe08a4a;
   slime(14, 24, surface, emberTint);
   slime(42, 56, surface, emberTint);
+  slime(57, 62, surface, emberTint);
+  slime(68, 74, 15, emberTint, true); // elite holding the ledge before the bridge
   slime(78, 96, 15, emberTint); // patrolling the lava bridge
   slime(98, 104, 15, emberTint); // holding the far end of the bridge
   slime(130, 139, surface, emberTint);
   slime(186, 190, surface, emberTint);
+  bat(26, 34, 72, surface, emberTint); // swooping over the first lava pit
+  bat(70, 90, 76, 15, emberTint); // hunting above the lava lake
+  bat(196, 204, 70, surface, emberTint); // circling the final approach
+
+  /* ---------------- Pickups ---------------- */
+
+  pickup('heart', 20);
+  pickup('boots', 45);
+  pickup('heart', 108);
+  pickup('boots', 136);
+  pickup('heart', 198);
+  d.pickups.push({ type: 'shield', x: tx(165), y: ty(15) }); // on the stepping stone
+  d.pickups.push({ type: 'shield', x: tx(86), y: ty(14) }); // on the lava bridge
 
   /* ---------------- Props ---------------- */
 
@@ -563,7 +633,7 @@ export function buildFrostfallPeaks(): LevelLayout {
   const rows = LEVEL_ROWS;
   const surface = 18;
   const d = makeDraft(cols, rows, surface);
-  const { fill, ground, coin, coinArc, prop, slime } = draftTools(d);
+  const { fill, ground, coin, coinArc, prop, slime, bat, pickup } = draftTools(d);
 
   /* ---------------- Terrain ---------------- */
 
@@ -650,10 +720,25 @@ export function buildFrostfallPeaks(): LevelLayout {
   const frostTint = 0x9fd6e8;
   slime(15, 24, surface, frostTint);
   slime(36, 50, surface, frostTint);
+  slime(63, 70, 13, frostTint, true); // elite pacing the windward ridge
   slime(83, 88, 13, frostTint); // guarding the leeward ridge
   slime(116, 126, surface, frostTint);
+  slime(118, 127, surface, frostTint, true); // elite before the chasm
   slime(155, 160, surface, frostTint);
   slime(196, 208, surface, frostTint);
+  bat(74, 82, 60, 13, frostTint); // hunting above the crevasse
+  bat(187, 196, 74, surface, frostTint); // circling the snow drift
+
+  /* ---------------- Pickups ---------------- */
+
+  pickup('heart', 14);
+  pickup('boots', 40);
+  d.pickups.push({ type: 'heart', x: tx(97), y: ty(13) }); // floating before the ridge
+  pickup('boots', 124);
+  pickup('shield', 160);
+  pickup('heart', 200);
+  pickup('boots', 224);
+  d.pickups.push({ type: 'shield', x: tx(65), y: ty(12) }); // on the windward ridge
 
   /* ---------------- Props ---------------- */
 
@@ -664,6 +749,16 @@ export function buildFrostfallPeaks(): LevelLayout {
 
   return finishDraft(d, {
     tileKey: 'tiles_peaks',
+    thinIce: [
+      // The first drift is only ice — keep moving or you go through.
+      { c0: 27, c1: 31, row: 18 },
+      // A thin patch on the windward ridge (a fall here drops into the void).
+      { c0: 68, c1: 72, row: 13 },
+      // Snow-drift crossing near the second checkpoint.
+      { c0: 187, c1: 191, row: 18 },
+      // The final approach before the ice shelf.
+      { c0: 211, c1: 214, row: 18 },
+    ],
     crystal: { id: 'ff_crystal_1', x: tx(142), y: ty(8) },
     checkpoints: [
       { id: 'ff_cp_1', index: 1, x: tx(106), y: surface * TILE - 16 },
@@ -683,7 +778,7 @@ export function buildForgottenKingdom(): LevelLayout {
   const rows = LEVEL_ROWS;
   const surface = 18;
   const d = makeDraft(cols, rows, surface);
-  const { fill, ground, coin, coinArc, prop, slime } = draftTools(d);
+  const { fill, ground, coin, coinArc, prop, slime, bat, pickup } = draftTools(d);
 
   /* ---------------- Terrain ---------------- */
 
@@ -772,10 +867,29 @@ export function buildForgottenKingdom(): LevelLayout {
   const ruinTint = 0xa8b08a;
   slime(16, 28, surface, ruinTint);
   slime(40, 54, surface, ruinTint);
+  slime(70, 76, 13, ruinTint, true); // elite stalking the battlement
   slime(122, 139, surface, ruinTint);
+  slime(124, 136, surface, ruinTint, true); // elite behind the first shrine
+  slime(145, 149, 16, ruinTint); // holding the causeway entrance
   slime(150, 166, 16, ruinTint); // pacing along the causeway
   slime(196, 200, surface, ruinTint);
   slime(206, 214, surface, ruinTint);
+  bat(15, 24, 68, surface, ruinTint); // wheeling over the broken gate
+  bat(31, 37, 70, surface, ruinTint); // diving across the moat
+  bat(88, 100, 84, surface, ruinTint); // circling the collapsed walkway
+  bat(155, 168, 72, 16, ruinTint); // hunting above the causeway
+  bat(214, 224, 74, surface, ruinTint); // guarding the last court
+
+  /* ---------------- Pickups ---------------- */
+
+  pickup('heart', 14);
+  pickup('boots', 45);
+  d.pickups.push({ type: 'heart', x: tx(101), y: ty(15) }); // on the stair landing
+  pickup('boots', 134);
+  pickup('heart', 176);
+  pickup('boots', 210);
+  d.pickups.push({ type: 'shield', x: tx(93), y: ty(12) }); // on the walkway
+  d.pickups.push({ type: 'shield', x: tx(158), y: ty(15) }); // on the causeway
 
   /* ---------------- Props ---------------- */
 
